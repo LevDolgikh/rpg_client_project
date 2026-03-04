@@ -1,0 +1,717 @@
+﻿from __future__ import annotations
+
+import json
+import logging
+import threading
+from queue import Empty, Queue
+from tkinter import BooleanVar, StringVar, Tk, filedialog, messagebox
+import tkinter as tk
+from tkinter import ttk
+from tkinter.scrolledtext import ScrolledText
+
+from chat_controller import ChatController
+from llm_client import LLMClientError
+from models import GameState
+
+logger = logging.getLogger(__name__)
+
+
+class RPGChatUI:
+    def __init__(self, root: Tk, controller: ChatController, state: GameState) -> None:
+        self.root = root
+        self.controller = controller
+        self.state = state
+
+        self._stream_queue: Queue[tuple[str, str]] = Queue()
+        self._streaming = False
+        self._stream_speaker = ""
+        self._stream_buffer = ""
+        self._last_request_tokens = 0
+
+        self.player_name_var = StringVar(value=self.state.player_name)
+        self.character_name_var = StringVar(value=self.state.character_name)
+        self.speaker_var = StringVar(value="Player")
+
+        self.server_status_var = StringVar(value="LM Studio: Unknown")
+        self.memory_limit_var = StringVar(value=str(self.controller.get_memory_limit()))
+
+        self.temperature_var = StringVar(value=str(self.state.settings.get("temperature", 0.7)))
+        self.top_p_var = StringVar(value=str(self.state.settings.get("top_p", 1.0)))
+        self.presence_penalty_var = StringVar(
+            value=str(self.state.settings.get("presence_penalty", 0.0))
+        )
+        self.frequency_penalty_var = StringVar(
+            value=str(self.state.settings.get("frequency_penalty", 0.0))
+        )
+        self.max_tokens_var = StringVar(value=str(self.state.settings.get("max_tokens", 150)))
+        self.prompt_debug_var = BooleanVar(
+            value=bool(self.state.settings.get("prompt_debug", False))
+        )
+
+        self.context_tokens_var = StringVar(value="Context tokens: 0 / 0")
+        self.last_request_var = StringVar(value="Last request: 0 tokens")
+
+        self.advanced_visible = False
+
+        self._configure_root()
+        self._build_layout()
+        self._bind_events()
+        self._refresh_server_status()
+        self.refresh_chat_history()
+        self.update_token_monitor()
+
+    def _configure_root(self) -> None:
+        self.root.title("RPG Chat Client")
+        self.root.geometry("960x900")
+        self.root.minsize(820, 700)
+
+    def _build_layout(self) -> None:
+        container = ttk.Frame(self.root)
+        container.pack(fill=tk.BOTH, expand=True)
+
+        self.canvas = tk.Canvas(container, highlightthickness=0)
+        self.scrollbar = ttk.Scrollbar(container, orient=tk.VERTICAL, command=self.canvas.yview)
+        self.content_frame = ttk.Frame(self.canvas)
+
+        self.content_frame.bind(
+            "<Configure>",
+            lambda _e: self.canvas.configure(scrollregion=self.canvas.bbox("all")),
+        )
+
+        self.canvas_window = self.canvas.create_window((0, 0), window=self.content_frame, anchor="nw")
+        self.canvas.configure(yscrollcommand=self.scrollbar.set)
+        self.canvas.bind("<Configure>", self._on_canvas_configure)
+
+        self.canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        self.scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+
+        self._build_server_status_section()
+        self._build_character_setup_section()
+        self._build_descriptions_section()
+        self._build_character_goal_section()
+        self._build_story_direction_section()
+        self._build_scene_memory_section()
+        self._build_chat_history_section()
+        self._build_message_input_section()
+        self._build_controls_section()
+        self._build_token_monitor_section()
+        self._build_advanced_options_section()
+
+    def _build_server_status_section(self) -> None:
+        frame = ttk.LabelFrame(self.content_frame, text="Server Status")
+        frame.pack(fill=tk.X, padx=10, pady=6)
+
+        ttk.Label(frame, textvariable=self.server_status_var).grid(row=0, column=0, sticky="w", padx=6, pady=6)
+        ttk.Button(frame, text="Reconnect", command=self._on_reconnect).grid(
+            row=0, column=1, padx=6, pady=6
+        )
+
+        ttk.Label(frame, text="Memory Limit:").grid(row=0, column=2, sticky="e", padx=6, pady=6)
+        ttk.Entry(frame, textvariable=self.memory_limit_var, width=10).grid(
+            row=0, column=3, sticky="w", padx=6, pady=6
+        )
+
+        frame.columnconfigure(0, weight=1)
+
+    def _build_character_setup_section(self) -> None:
+        frame = ttk.LabelFrame(self.content_frame, text="Character Setup")
+        frame.pack(fill=tk.X, padx=10, pady=6)
+
+        ttk.Label(frame, text="Player Name").grid(row=0, column=0, sticky="w", padx=6, pady=6)
+        ttk.Entry(frame, textvariable=self.player_name_var, width=24).grid(
+            row=0, column=1, sticky="w", padx=6, pady=6
+        )
+
+        ttk.Label(frame, text="Character Name").grid(row=0, column=2, sticky="w", padx=6, pady=6)
+        ttk.Entry(frame, textvariable=self.character_name_var, width=24).grid(
+            row=0, column=3, sticky="w", padx=6, pady=6
+        )
+
+    def _build_descriptions_section(self) -> None:
+        frame = ttk.LabelFrame(self.content_frame, text="Descriptions")
+        frame.pack(fill=tk.BOTH, padx=10, pady=6)
+
+        ttk.Label(frame, text="Player Description").grid(row=0, column=0, sticky="w", padx=6, pady=(6, 2))
+        self.player_description_text = ScrolledText(frame, height=5, wrap=tk.WORD)
+        self.player_description_text.grid(row=1, column=0, sticky="nsew", padx=6, pady=2)
+        ttk.Label(frame, text="Write short lines. One line = one idea.").grid(
+            row=2, column=0, sticky="w", padx=6, pady=(0, 6)
+        )
+
+        ttk.Label(frame, text="Character Description").grid(row=3, column=0, sticky="w", padx=6, pady=(6, 2))
+        self.character_description_text = ScrolledText(frame, height=5, wrap=tk.WORD)
+        self.character_description_text.grid(row=4, column=0, sticky="nsew", padx=6, pady=2)
+        ttk.Label(frame, text="Write short lines. One line = one idea.").grid(
+            row=5, column=0, sticky="w", padx=6, pady=(0, 6)
+        )
+
+        ttk.Label(frame, text="World Scenario").grid(row=6, column=0, sticky="w", padx=6, pady=(6, 2))
+        self.world_scenario_text = ScrolledText(frame, height=6, wrap=tk.WORD)
+        self.world_scenario_text.grid(row=7, column=0, sticky="nsew", padx=6, pady=2)
+        ttk.Label(frame, text="Write short lines. One line = one idea.").grid(
+            row=8, column=0, sticky="w", padx=6, pady=(0, 6)
+        )
+
+        frame.columnconfigure(0, weight=1)
+
+    def _build_character_goal_section(self) -> None:
+        frame = ttk.LabelFrame(self.content_frame, text="Character Goal")
+        frame.pack(fill=tk.BOTH, padx=10, pady=6)
+
+        self.character_goal_text = ScrolledText(frame, height=5, wrap=tk.WORD)
+        self.character_goal_text.pack(fill=tk.BOTH, expand=True, padx=6, pady=(6, 2))
+        ttk.Label(
+            frame,
+            text="Write short lines with the Character's goals or hidden intentions.",
+        ).pack(anchor="w", padx=6, pady=(0, 6))
+
+    def _build_story_direction_section(self) -> None:
+        frame = ttk.LabelFrame(self.content_frame, text="Story Direction")
+        frame.pack(fill=tk.BOTH, padx=10, pady=6)
+
+        self.story_direction_text = ScrolledText(frame, height=5, wrap=tk.WORD)
+        self.story_direction_text.pack(fill=tk.BOTH, expand=True, padx=6, pady=(6, 2))
+        ttk.Label(
+            frame,
+            text="Guide the next events in short lines. One line = one direction.",
+        ).pack(anchor="w", padx=6, pady=(0, 6))
+
+    def _build_scene_memory_section(self) -> None:
+        frame = ttk.LabelFrame(self.content_frame, text="Scene Memory")
+        frame.pack(fill=tk.BOTH, padx=10, pady=6)
+
+        self.scene_memory_text = ScrolledText(frame, height=6, wrap=tk.WORD)
+        self.scene_memory_text.pack(fill=tk.BOTH, expand=True, padx=6, pady=(6, 2))
+        ttk.Label(
+            frame,
+            text="Keep summarized past events here as short factual lines.",
+        ).pack(anchor="w", padx=6, pady=(0, 6))
+
+    def _build_chat_history_section(self) -> None:
+        frame = ttk.LabelFrame(self.content_frame, text="Chat History")
+        frame.pack(fill=tk.BOTH, padx=10, pady=6)
+
+        self.chat_history_text = ScrolledText(frame, height=14, wrap=tk.WORD, state=tk.DISABLED)
+        self.chat_history_text.pack(fill=tk.BOTH, expand=True, padx=6, pady=(6, 2))
+        ttk.Label(
+            frame,
+            text="Read-only conversation view. Use 'Delete Last Message' to remove the latest turn.",
+        ).pack(anchor="w", padx=6, pady=(0, 6))
+
+    def _build_message_input_section(self) -> None:
+        frame = ttk.LabelFrame(self.content_frame, text="Message Input")
+        frame.pack(fill=tk.BOTH, padx=10, pady=6)
+
+        self.message_input_text = ScrolledText(frame, height=4, wrap=tk.WORD)
+        self.message_input_text.pack(fill=tk.BOTH, expand=True, padx=6, pady=6)
+
+        selector_row = ttk.Frame(frame)
+        selector_row.pack(fill=tk.X, padx=6, pady=(0, 6))
+
+        ttk.Label(selector_row, text="Speaker").pack(side=tk.LEFT)
+        speaker_combo = ttk.Combobox(
+            selector_row,
+            textvariable=self.speaker_var,
+            values=["Player", "Character"],
+            width=14,
+            state="readonly",
+        )
+        speaker_combo.pack(side=tk.LEFT, padx=8)
+
+    def _build_controls_section(self) -> None:
+        frame = ttk.LabelFrame(self.content_frame, text="Controls")
+        frame.pack(fill=tk.X, padx=10, pady=6)
+
+        self.send_button = ttk.Button(frame, text="Send Message", command=self._on_send_message)
+        self.generate_button = ttk.Button(frame, text="Generate Response", command=self._on_generate_response)
+        self.enhance_button = ttk.Button(frame, text="Enhance Message", command=self._on_enhance_message)
+        self.redo_button = ttk.Button(frame, text="Redo Response", command=self._on_redo_response)
+        self.summary_button = ttk.Button(frame, text="Make Summary", command=self._on_make_summary)
+        self.delete_last_button = ttk.Button(
+            frame,
+            text="Delete Last Message",
+            command=self._on_delete_last_message,
+        )
+        self.save_button = ttk.Button(frame, text="Save Game", command=self._on_save_game)
+        self.load_button = ttk.Button(frame, text="Load Game", command=self._on_load_game)
+        self.stop_button = ttk.Button(frame, text="Stop Generation", command=self._on_stop_generation)
+
+        buttons = [
+            self.send_button,
+            self.generate_button,
+            self.enhance_button,
+            self.redo_button,
+            self.summary_button,
+            self.delete_last_button,
+            self.save_button,
+            self.load_button,
+            self.stop_button,
+        ]
+
+        for idx, button in enumerate(buttons):
+            row = idx // 4
+            col = idx % 4
+            button.grid(row=row, column=col, padx=6, pady=6, sticky="ew")
+
+        for col in range(4):
+            frame.columnconfigure(col, weight=1)
+
+    def _build_token_monitor_section(self) -> None:
+        frame = ttk.LabelFrame(self.content_frame, text="Token Monitor")
+        frame.pack(fill=tk.X, padx=10, pady=6)
+
+        self.context_tokens_label = ttk.Label(frame, textvariable=self.context_tokens_var)
+        self.context_tokens_label.pack(anchor="w", padx=6, pady=(6, 2))
+
+        self.last_request_label = ttk.Label(frame, textvariable=self.last_request_var)
+        self.last_request_label.pack(anchor="w", padx=6, pady=(2, 6))
+
+    def _build_advanced_options_section(self) -> None:
+        section = ttk.LabelFrame(self.content_frame, text="Advanced Options")
+        section.pack(fill=tk.X, padx=10, pady=6)
+
+        self.advanced_toggle_button = ttk.Button(
+            section,
+            text="Show Advanced Options",
+            command=self._toggle_advanced_options,
+        )
+        self.advanced_toggle_button.pack(anchor="w", padx=6, pady=6)
+
+        self.advanced_frame = ttk.Frame(section)
+
+        self._labeled_entry(self.advanced_frame, "Temperature", self.temperature_var, 0)
+        self._labeled_entry(self.advanced_frame, "Top P", self.top_p_var, 1)
+        self._labeled_entry(self.advanced_frame, "Presence Penalty", self.presence_penalty_var, 2)
+        self._labeled_entry(self.advanced_frame, "Frequency Penalty", self.frequency_penalty_var, 3)
+        self._labeled_entry(self.advanced_frame, "Max Tokens", self.max_tokens_var, 4)
+
+        ttk.Checkbutton(
+            self.advanced_frame,
+            text="Prompt Debug Mode",
+            variable=self.prompt_debug_var,
+        ).grid(row=5, column=0, columnspan=2, sticky="w", padx=6, pady=6)
+
+        self._load_state_into_fields()
+
+    def _labeled_entry(self, parent: ttk.Frame, label: str, variable: StringVar, row: int) -> None:
+        ttk.Label(parent, text=label).grid(row=row, column=0, sticky="w", padx=6, pady=4)
+        ttk.Entry(parent, textvariable=variable, width=18).grid(
+            row=row,
+            column=1,
+            sticky="w",
+            padx=6,
+            pady=4,
+        )
+
+    def _bind_events(self) -> None:
+        self.root.bind_all("<MouseWheel>", self._on_mousewheel)
+        self._bind_clipboard_shortcuts()
+
+    def _bind_clipboard_shortcuts(self) -> None:
+        clipboard_events = {
+            "<Control-c>": "<<Copy>>",
+            "<Control-C>": "<<Copy>>",
+            "<Control-x>": "<<Cut>>",
+            "<Control-X>": "<<Cut>>",
+            "<Control-v>": "<<Paste>>",
+            "<Control-V>": "<<Paste>>",
+            "<Control-Insert>": "<<Copy>>",
+            "<Shift-Insert>": "<<Paste>>",
+            "<Shift-Delete>": "<<Cut>>",
+        }
+
+        for class_name in ("Text", "Entry", "TEntry"):
+            for sequence, virtual_event in clipboard_events.items():
+                self.root.bind_class(
+                    class_name,
+                    sequence,
+                    lambda event, ve=virtual_event: self._forward_virtual_event(event, ve),
+                    add="+",
+                )
+
+            self.root.bind_class(
+                class_name,
+                "<Control-a>",
+                self._on_select_all,
+                add="+",
+            )
+            self.root.bind_class(
+                class_name,
+                "<Control-A>",
+                self._on_select_all,
+                add="+",
+            )
+
+    def _forward_virtual_event(self, event: tk.Event, virtual_event: str) -> str:
+        event.widget.event_generate(virtual_event)
+        return "break"
+
+    def _on_select_all(self, event: tk.Event) -> str:
+        widget = event.widget
+
+        if isinstance(widget, tk.Text):
+            widget.tag_add(tk.SEL, "1.0", "end-1c")
+            widget.mark_set(tk.INSERT, "end-1c")
+            widget.see(tk.INSERT)
+            return "break"
+
+        if isinstance(widget, (tk.Entry, ttk.Entry)):
+            widget.selection_range(0, tk.END)
+            widget.icursor(tk.END)
+            return "break"
+
+        return "break"
+
+    def _on_canvas_configure(self, event: tk.Event) -> None:
+        self.canvas.itemconfigure(self.canvas_window, width=event.width)
+
+    def _on_mousewheel(self, event: tk.Event) -> None:
+        self.canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+
+    def _toggle_advanced_options(self) -> None:
+        self.advanced_visible = not self.advanced_visible
+        if self.advanced_visible:
+            self.advanced_frame.pack(fill=tk.X, padx=6, pady=(0, 6))
+            self.advanced_toggle_button.configure(text="Hide Advanced Options")
+        else:
+            self.advanced_frame.pack_forget()
+            self.advanced_toggle_button.configure(text="Show Advanced Options")
+
+    def _load_state_into_fields(self) -> None:
+        self.player_description_text.insert("1.0", self.state.player_description)
+        self.character_description_text.insert("1.0", self.state.character_description)
+        self.world_scenario_text.insert("1.0", self.state.world_scenario)
+        self.character_goal_text.insert("1.0", self.state.character_goal)
+        self.story_direction_text.insert("1.0", self.state.story_direction)
+        self.scene_memory_text.insert("1.0", self.state.scene_memory)
+
+    def _read_text(self, widget: ScrolledText) -> str:
+        return widget.get("1.0", tk.END).strip()
+
+    def _push_fields_to_state(self) -> None:
+        self.state.player_name = self.player_name_var.get().strip() or "Player"
+        self.state.character_name = self.character_name_var.get().strip() or "Character"
+
+        self.state.player_description = self._read_text(self.player_description_text)
+        self.state.character_description = self._read_text(self.character_description_text)
+        self.state.world_scenario = self._read_text(self.world_scenario_text)
+        self.state.character_goal = self._read_text(self.character_goal_text)
+        self.state.story_direction = self._read_text(self.story_direction_text)
+        self.state.scene_memory = self._read_text(self.scene_memory_text)
+
+        self.controller.apply_generation_settings(
+            temperature=self._safe_float(self.temperature_var.get(), 0.7),
+            top_p=self._safe_float(self.top_p_var.get(), 1.0),
+            presence_penalty=self._safe_float(self.presence_penalty_var.get(), 0.0),
+            frequency_penalty=self._safe_float(self.frequency_penalty_var.get(), 0.0),
+            max_tokens=self._safe_int(self.max_tokens_var.get(), 150),
+            prompt_debug=bool(self.prompt_debug_var.get()),
+        )
+
+        new_limit = self._safe_int(
+            self.memory_limit_var.get(),
+            self.controller.get_memory_limit(),
+        )
+        self.controller.set_memory_limit(new_limit)
+
+    def _safe_float(self, value: str, default: float) -> float:
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return default
+
+    def _safe_int(self, value: str, default: int) -> int:
+        try:
+            parsed = int(float(value))
+        except (TypeError, ValueError):
+            return default
+        return max(1, parsed)
+
+    def _on_reconnect(self) -> None:
+        self._refresh_server_status()
+
+    def _refresh_server_status(self) -> None:
+        try:
+            if self.controller.is_server_connected():
+                self.server_status_var.set("LM Studio: Connected")
+            else:
+                self.server_status_var.set("LM Studio: Disconnected")
+        except Exception:
+            self.server_status_var.set("LM Studio: Disconnected")
+
+    def _on_send_message(self) -> None:
+        if self._streaming:
+            return
+
+        self._push_fields_to_state()
+        speaker = self.speaker_var.get().strip() or "Player"
+        message = self._read_text(self.message_input_text)
+        if not message:
+            return
+
+        self.controller.send_message(speaker, message)
+        self.message_input_text.delete("1.0", tk.END)
+        self.refresh_chat_history()
+        self.update_token_monitor()
+
+    def _on_generate_response(self) -> None:
+        if self._streaming:
+            return
+
+        self._push_fields_to_state()
+        speaker = self.speaker_var.get().strip() or "Character"
+        user_input = self._read_text(self.message_input_text)
+        self.message_input_text.delete("1.0", tk.END)
+
+        self._streaming = True
+        self._stream_speaker = speaker
+        self._stream_buffer = ""
+        self._set_generation_controls_enabled(False)
+
+        thread = threading.Thread(
+            target=self._stream_generation_worker,
+            args=(speaker, user_input),
+            daemon=True,
+        )
+        thread.start()
+        self.root.after(50, self._poll_stream_queue)
+
+    def _stream_generation_worker(self, speaker: str, user_input: str) -> None:
+        try:
+            response_text = self.controller.generate_response(
+                speaker=speaker,
+                user_input=user_input,
+                stream=True,
+                on_stream_token=lambda chunk: self._stream_queue.put(("chunk", chunk)),
+            )
+            self._stream_queue.put(("done", response_text))
+        except Exception as exc:
+            self._stream_queue.put(("error", str(exc)))
+
+    def _poll_stream_queue(self) -> None:
+        had_event = False
+        while True:
+            try:
+                kind, payload = self._stream_queue.get_nowait()
+            except Empty:
+                break
+
+            had_event = True
+            if kind == "chunk":
+                self._stream_buffer += payload
+                self.refresh_chat_history(transient_turn=(self._stream_speaker, self._stream_buffer))
+            elif kind == "done":
+                self._last_request_tokens = self.controller.estimate_text_tokens(payload)
+                self._streaming = False
+                self._stream_speaker = ""
+                self._stream_buffer = ""
+                self._set_generation_controls_enabled(True)
+                self.refresh_chat_history()
+                self.update_token_monitor()
+            elif kind == "error":
+                self._streaming = False
+                self._stream_speaker = ""
+                self._stream_buffer = ""
+                self._set_generation_controls_enabled(True)
+                messagebox.showerror("Generation Error", payload)
+                self.refresh_chat_history()
+                self.update_token_monitor()
+
+        if self._streaming or had_event:
+            self.root.after(50, self._poll_stream_queue)
+
+    def _on_enhance_message(self) -> None:
+        if self._streaming:
+            return
+
+        self._push_fields_to_state()
+        text = self._read_text(self.message_input_text)
+        if not text:
+            return
+
+        try:
+            enhanced = self.controller.enhance_message(text)
+        except LLMClientError as exc:
+            messagebox.showerror("Enhance Error", str(exc))
+            return
+
+        self._last_request_tokens = self.controller.estimate_text_tokens(enhanced)
+        self.message_input_text.delete("1.0", tk.END)
+        self.message_input_text.insert("1.0", enhanced)
+        self.update_token_monitor()
+
+    def _on_redo_response(self) -> None:
+        if self._streaming:
+            return
+
+        self._push_fields_to_state()
+        if not self.state.chat_history:
+            return
+
+        self._streaming = True
+        self._stream_speaker = self.state.chat_history[-1][0]
+        self._stream_buffer = ""
+        self._set_generation_controls_enabled(False)
+
+        thread = threading.Thread(target=self._redo_stream_worker, daemon=True)
+        thread.start()
+        self.root.after(50, self._poll_stream_queue)
+
+    def _redo_stream_worker(self) -> None:
+        try:
+            response_text = self.controller.redo_response(
+                stream=True,
+                on_stream_token=lambda chunk: self._stream_queue.put(("chunk", chunk)),
+            )
+            self._stream_queue.put(("done", response_text))
+        except Exception as exc:
+            self._stream_queue.put(("error", str(exc)))
+
+    def _on_make_summary(self) -> None:
+        if self._streaming:
+            return
+
+        self._push_fields_to_state()
+        try:
+            summary = self.controller.make_summary()
+        except Exception as exc:
+            messagebox.showerror("Summary Error", str(exc))
+            return
+
+        if summary:
+            self.scene_memory_text.delete("1.0", tk.END)
+            self.scene_memory_text.insert("1.0", self.state.scene_memory)
+            self._last_request_tokens = self.controller.estimate_text_tokens(summary)
+
+        self.refresh_chat_history()
+        self.update_token_monitor()
+
+    def _on_delete_last_message(self) -> None:
+        if self._streaming:
+            return
+        self._push_fields_to_state()
+        self.controller.delete_last_message()
+        self.refresh_chat_history()
+        self.update_token_monitor()
+
+    def _on_stop_generation(self) -> None:
+        self.controller.stop_generation()
+
+    def _on_save_game(self) -> None:
+        self._push_fields_to_state()
+        path = filedialog.asksaveasfilename(
+            title="Save Game",
+            defaultextension=".json",
+            filetypes=[("JSON Files", "*.json"), ("All Files", "*.*")],
+        )
+        if not path:
+            return
+
+        try:
+            with open(path, "w", encoding="utf-8") as file_obj:
+                json.dump(self.state.to_dict(), file_obj, ensure_ascii=False, indent=2)
+        except OSError as exc:
+            messagebox.showerror("Save Error", str(exc))
+
+    def _on_load_game(self) -> None:
+        if self._streaming:
+            return
+
+        path = filedialog.askopenfilename(
+            title="Load Game",
+            filetypes=[("JSON Files", "*.json"), ("All Files", "*.*")],
+        )
+        if not path:
+            return
+
+        try:
+            with open(path, "r", encoding="utf-8") as file_obj:
+                payload = json.load(file_obj)
+        except (OSError, json.JSONDecodeError) as exc:
+            messagebox.showerror("Load Error", str(exc))
+            return
+
+        self.state = GameState.from_dict(payload)
+        self.controller.state = self.state
+        self._apply_state_to_widgets()
+        self.refresh_chat_history()
+        self.update_token_monitor()
+
+    def _apply_state_to_widgets(self) -> None:
+        self.player_name_var.set(self.state.player_name)
+        self.character_name_var.set(self.state.character_name)
+
+        self.player_description_text.delete("1.0", tk.END)
+        self.player_description_text.insert("1.0", self.state.player_description)
+
+        self.character_description_text.delete("1.0", tk.END)
+        self.character_description_text.insert("1.0", self.state.character_description)
+
+        self.world_scenario_text.delete("1.0", tk.END)
+        self.world_scenario_text.insert("1.0", self.state.world_scenario)
+
+        self.character_goal_text.delete("1.0", tk.END)
+        self.character_goal_text.insert("1.0", self.state.character_goal)
+
+        self.story_direction_text.delete("1.0", tk.END)
+        self.story_direction_text.insert("1.0", self.state.story_direction)
+
+        self.scene_memory_text.delete("1.0", tk.END)
+        self.scene_memory_text.insert("1.0", self.state.scene_memory)
+
+        self.temperature_var.set(str(self.state.settings.get("temperature", 0.7)))
+        self.top_p_var.set(str(self.state.settings.get("top_p", 1.0)))
+        self.presence_penalty_var.set(str(self.state.settings.get("presence_penalty", 0.0)))
+        self.frequency_penalty_var.set(str(self.state.settings.get("frequency_penalty", 0.0)))
+        self.max_tokens_var.set(str(self.state.settings.get("max_tokens", 150)))
+        self.prompt_debug_var.set(bool(self.state.settings.get("prompt_debug", False)))
+
+    def _set_generation_controls_enabled(self, enabled: bool) -> None:
+        state = tk.NORMAL if enabled else tk.DISABLED
+        self.send_button.configure(state=state)
+        self.generate_button.configure(state=state)
+        self.enhance_button.configure(state=state)
+        self.redo_button.configure(state=state)
+        self.summary_button.configure(state=state)
+        self.delete_last_button.configure(state=state)
+        self.save_button.configure(state=state)
+        self.load_button.configure(state=state)
+        self.stop_button.configure(state=tk.NORMAL)
+
+    def refresh_chat_history(self, transient_turn: tuple[str, str] | None = None) -> None:
+        lines = self.controller.get_chat_history_text().splitlines() if self.state.chat_history else []
+        if transient_turn is not None and transient_turn[1]:
+            lines.append(f"{transient_turn[0]}: {transient_turn[1]}")
+
+        self.chat_history_text.configure(state=tk.NORMAL)
+        self.chat_history_text.delete("1.0", tk.END)
+        self.chat_history_text.insert("1.0", "\n".join(lines))
+        self.chat_history_text.configure(state=tk.DISABLED)
+        self.chat_history_text.see(tk.END)
+
+    def update_token_monitor(self) -> None:
+        self._push_fields_to_state()
+
+        used_tokens, max_tokens = self.controller.preview_context_tokens(
+            next_speaker=self.speaker_var.get().strip() or "Character",
+            user_input=self._read_text(self.message_input_text),
+        )
+
+        self.context_tokens_var.set(f"Context tokens: {used_tokens} / {max_tokens}")
+        self.last_request_var.set(f"Last request: {self._last_request_tokens} tokens")
+
+        ratio = 0.0 if max_tokens <= 0 else used_tokens / max_tokens
+        if ratio < 0.6:
+            color = "green"
+        elif ratio < 0.8:
+            color = "orange"
+        else:
+            color = "red"
+
+        self.context_tokens_label.configure(foreground=color)
+
+        if self.state.settings.get("prompt_debug", False):
+            logger.debug("Prompt Debug - context tokens: %s", used_tokens)
+
+    def run(self) -> None:
+        self.root.mainloop()
