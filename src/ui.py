@@ -11,7 +11,7 @@ from tkinter.scrolledtext import ScrolledText
 
 from chat_controller import ChatController
 from llm_client import LLMClientError
-from models import GameState
+from models import DEFAULT_SETTINGS, GameState
 
 logger = logging.getLogger(__name__)
 
@@ -27,6 +27,7 @@ class RPGChatUI:
         self._stream_speaker = ""
         self._stream_buffer = ""
         self._last_request_tokens = 0
+        self._last_prompt_debug_signature: tuple[int, int, str, int] | None = None
 
         self.player_name_var = StringVar(value=self.state.player_name)
         self.character_name_var = StringVar(value=self.state.character_name)
@@ -35,17 +36,25 @@ class RPGChatUI:
         self.server_status_var = StringVar(value="LM Studio: Unknown")
         self.memory_limit_var = StringVar(value=str(self.controller.get_memory_limit()))
 
-        self.temperature_var = StringVar(value=str(self.state.settings.get("temperature", 0.7)))
-        self.top_p_var = StringVar(value=str(self.state.settings.get("top_p", 1.0)))
+        self.temperature_var = StringVar(
+            value=str(self.state.settings.get("temperature", DEFAULT_SETTINGS["temperature"]))
+        )
+        self.top_p_var = StringVar(value=str(self.state.settings.get("top_p", DEFAULT_SETTINGS["top_p"])))
         self.presence_penalty_var = StringVar(
-            value=str(self.state.settings.get("presence_penalty", 0.0))
+            value=str(
+                self.state.settings.get("presence_penalty", DEFAULT_SETTINGS["presence_penalty"])
+            )
         )
         self.frequency_penalty_var = StringVar(
-            value=str(self.state.settings.get("frequency_penalty", 0.0))
+            value=str(
+                self.state.settings.get("frequency_penalty", DEFAULT_SETTINGS["frequency_penalty"])
+            )
         )
-        self.max_tokens_var = StringVar(value=str(self.state.settings.get("max_tokens", 150)))
+        self.max_tokens_var = StringVar(
+            value=str(self.state.settings.get("max_tokens", DEFAULT_SETTINGS["max_tokens"]))
+        )
         self.prompt_debug_var = BooleanVar(
-            value=bool(self.state.settings.get("prompt_debug", False))
+            value=bool(self.state.settings.get("prompt_debug", DEFAULT_SETTINGS["prompt_debug"]))
         )
 
         self.context_tokens_var = StringVar(value="Context tokens: 0 / 0")
@@ -279,21 +288,77 @@ class RPGChatUI:
 
         self.advanced_frame = ttk.Frame(section)
 
-        self._labeled_entry(self.advanced_frame, "Temperature", self.temperature_var, 0)
-        self._labeled_entry(self.advanced_frame, "Top P", self.top_p_var, 1)
-        self._labeled_entry(self.advanced_frame, "Presence Penalty", self.presence_penalty_var, 2)
-        self._labeled_entry(self.advanced_frame, "Frequency Penalty", self.frequency_penalty_var, 3)
-        self._labeled_entry(self.advanced_frame, "Max Tokens", self.max_tokens_var, 4)
+        ttk.Label(
+            self.advanced_frame,
+            text="Lower values are more stable. Higher values are more creative but less consistent.",
+        ).grid(row=0, column=0, columnspan=3, sticky="w", padx=6, pady=(4, 2))
+
+        self._labeled_entry(
+            self.advanced_frame,
+            "Temperature",
+            self.temperature_var,
+            1,
+            "Allowed 0.5-0.9, default 0.7.",
+        )
+        self._labeled_entry(
+            self.advanced_frame,
+            "Top P",
+            self.top_p_var,
+            2,
+            "Allowed 0.8-0.95, default 0.9.",
+        )
+        self._labeled_entry(
+            self.advanced_frame,
+            "Presence Penalty",
+            self.presence_penalty_var,
+            3,
+            "Allowed 0.0-0.6, default 0.3.",
+        )
+        self._labeled_entry(
+            self.advanced_frame,
+            "Frequency Penalty",
+            self.frequency_penalty_var,
+            4,
+            "Allowed 0.0-0.5, default 0.2.",
+        )
+        self._labeled_entry(
+            self.advanced_frame,
+            "Max Tokens",
+            self.max_tokens_var,
+            5,
+            "Default 120. Keeps replies around moderate length.",
+        )
+
+        ttk.Button(
+            self.advanced_frame,
+            text="Reset Recommended",
+            command=self._reset_advanced_defaults,
+        ).grid(row=6, column=0, sticky="w", padx=6, pady=6)
 
         ttk.Checkbutton(
             self.advanced_frame,
             text="Prompt Debug Mode",
             variable=self.prompt_debug_var,
-        ).grid(row=5, column=0, columnspan=2, sticky="w", padx=6, pady=6)
+        ).grid(row=7, column=0, columnspan=2, sticky="w", padx=6, pady=(4, 2))
+        ttk.Label(
+            self.advanced_frame,
+            text="When enabled: logs context token usage and prompt metadata to app console.",
+        ).grid(row=8, column=0, columnspan=3, sticky="w", padx=6, pady=(0, 6))
+        ttk.Label(
+            self.advanced_frame,
+            text="Values above ranges are auto-limited to avoid unstable roleplay.",
+        ).grid(row=9, column=0, columnspan=3, sticky="w", padx=6, pady=(0, 6))
 
         self._load_state_into_fields()
 
-    def _labeled_entry(self, parent: ttk.Frame, label: str, variable: StringVar, row: int) -> None:
+    def _labeled_entry(
+        self,
+        parent: ttk.Frame,
+        label: str,
+        variable: StringVar,
+        row: int,
+        hint: str,
+    ) -> None:
         ttk.Label(parent, text=label).grid(row=row, column=0, sticky="w", padx=6, pady=4)
         ttk.Entry(parent, textvariable=variable, width=18).grid(
             row=row,
@@ -302,6 +367,16 @@ class RPGChatUI:
             padx=6,
             pady=4,
         )
+        ttk.Label(parent, text=hint).grid(row=row, column=2, sticky="w", padx=6, pady=4)
+
+    def _reset_advanced_defaults(self) -> None:
+        self.temperature_var.set(str(DEFAULT_SETTINGS["temperature"]))
+        self.top_p_var.set(str(DEFAULT_SETTINGS["top_p"]))
+        self.presence_penalty_var.set(str(DEFAULT_SETTINGS["presence_penalty"]))
+        self.frequency_penalty_var.set(str(DEFAULT_SETTINGS["frequency_penalty"]))
+        self.max_tokens_var.set(str(DEFAULT_SETTINGS["max_tokens"]))
+        self.prompt_debug_var.set(bool(DEFAULT_SETTINGS["prompt_debug"]))
+        self.update_token_monitor()
 
     def _bind_events(self) -> None:
         self.root.bind_all("<MouseWheel>", self._on_mousewheel)
@@ -399,12 +474,41 @@ class RPGChatUI:
         self.state.story_direction = self._read_text(self.story_direction_text)
         self.state.scene_memory = self._read_text(self.scene_memory_text)
 
+        temperature = self._safe_clamped_float(
+            self.temperature_var.get(),
+            float(DEFAULT_SETTINGS["temperature"]),
+            min_value=0.5,
+            max_value=0.9,
+        )
+        top_p = self._safe_clamped_float(
+            self.top_p_var.get(),
+            float(DEFAULT_SETTINGS["top_p"]),
+            min_value=0.8,
+            max_value=0.95,
+        )
+        presence_penalty = self._safe_clamped_float(
+            self.presence_penalty_var.get(),
+            float(DEFAULT_SETTINGS["presence_penalty"]),
+            min_value=0.0,
+            max_value=0.6,
+        )
+        frequency_penalty = self._safe_clamped_float(
+            self.frequency_penalty_var.get(),
+            float(DEFAULT_SETTINGS["frequency_penalty"]),
+            min_value=0.0,
+            max_value=0.5,
+        )
+        self.temperature_var.set(f"{temperature:g}")
+        self.top_p_var.set(f"{top_p:g}")
+        self.presence_penalty_var.set(f"{presence_penalty:g}")
+        self.frequency_penalty_var.set(f"{frequency_penalty:g}")
+
         self.controller.apply_generation_settings(
-            temperature=self._safe_float(self.temperature_var.get(), 0.7),
-            top_p=self._safe_float(self.top_p_var.get(), 1.0),
-            presence_penalty=self._safe_float(self.presence_penalty_var.get(), 0.0),
-            frequency_penalty=self._safe_float(self.frequency_penalty_var.get(), 0.0),
-            max_tokens=self._safe_int(self.max_tokens_var.get(), 150),
+            temperature=temperature,
+            top_p=top_p,
+            presence_penalty=presence_penalty,
+            frequency_penalty=frequency_penalty,
+            max_tokens=self._safe_int(self.max_tokens_var.get(), int(DEFAULT_SETTINGS["max_tokens"])),
             prompt_debug=bool(self.prompt_debug_var.get()),
         )
 
@@ -419,6 +523,20 @@ class RPGChatUI:
             return float(value)
         except (TypeError, ValueError):
             return default
+
+    def _safe_clamped_float(
+        self,
+        value: str,
+        default: float,
+        min_value: float,
+        max_value: float,
+    ) -> float:
+        parsed = self._safe_float(value, default)
+        if parsed < min_value:
+            return min_value
+        if parsed > max_value:
+            return max_value
+        return parsed
 
     def _safe_int(self, value: str, default: int) -> int:
         try:
@@ -659,12 +777,18 @@ class RPGChatUI:
         self.scene_memory_text.delete("1.0", tk.END)
         self.scene_memory_text.insert("1.0", self.state.scene_memory)
 
-        self.temperature_var.set(str(self.state.settings.get("temperature", 0.7)))
-        self.top_p_var.set(str(self.state.settings.get("top_p", 1.0)))
-        self.presence_penalty_var.set(str(self.state.settings.get("presence_penalty", 0.0)))
-        self.frequency_penalty_var.set(str(self.state.settings.get("frequency_penalty", 0.0)))
-        self.max_tokens_var.set(str(self.state.settings.get("max_tokens", 150)))
-        self.prompt_debug_var.set(bool(self.state.settings.get("prompt_debug", False)))
+        self.temperature_var.set(str(self.state.settings.get("temperature", DEFAULT_SETTINGS["temperature"])))
+        self.top_p_var.set(str(self.state.settings.get("top_p", DEFAULT_SETTINGS["top_p"])))
+        self.presence_penalty_var.set(
+            str(self.state.settings.get("presence_penalty", DEFAULT_SETTINGS["presence_penalty"]))
+        )
+        self.frequency_penalty_var.set(
+            str(self.state.settings.get("frequency_penalty", DEFAULT_SETTINGS["frequency_penalty"]))
+        )
+        self.max_tokens_var.set(str(self.state.settings.get("max_tokens", DEFAULT_SETTINGS["max_tokens"])))
+        self.prompt_debug_var.set(
+            bool(self.state.settings.get("prompt_debug", DEFAULT_SETTINGS["prompt_debug"]))
+        )
 
     def _set_generation_controls_enabled(self, enabled: bool) -> None:
         state = tk.NORMAL if enabled else tk.DISABLED
@@ -711,7 +835,23 @@ class RPGChatUI:
         self.context_tokens_label.configure(foreground=color)
 
         if self.state.settings.get("prompt_debug", False):
-            logger.debug("Prompt Debug - context tokens: %s", used_tokens)
+            signature = (
+                used_tokens,
+                max_tokens,
+                self.speaker_var.get().strip() or "Character",
+                len(self.state.chat_history),
+            )
+            if signature != self._last_prompt_debug_signature:
+                logger.info(
+                    "Prompt Debug - tokens: %s/%s, next_speaker=%s, chat_turns=%s",
+                    used_tokens,
+                    max_tokens,
+                    signature[2],
+                    signature[3],
+                )
+                self._last_prompt_debug_signature = signature
+        else:
+            self._last_prompt_debug_signature = None
 
     def run(self) -> None:
         self.root.mainloop()

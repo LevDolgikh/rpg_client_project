@@ -3,6 +3,15 @@
 from dataclasses import dataclass, field
 from typing import Any
 
+DEFAULT_SETTINGS: dict[str, Any] = {
+    "temperature": 0.7,
+    "top_p": 0.9,
+    "presence_penalty": 0.3,
+    "frequency_penalty": 0.2,
+    "max_tokens": 120,
+    "prompt_debug": False,
+}
+
 
 @dataclass
 class GameState:
@@ -15,7 +24,7 @@ class GameState:
     story_direction: str = ""
     scene_memory: str = ""
     chat_history: list[tuple[str, str]] = field(default_factory=list)
-    settings: dict[str, Any] = field(default_factory=dict)
+    settings: dict[str, Any] = field(default_factory=lambda: dict(DEFAULT_SETTINGS))
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -54,6 +63,8 @@ class GameState:
         settings = data.get("settings", {})
         if not isinstance(settings, dict):
             settings = {}
+        merged_settings = dict(DEFAULT_SETTINGS)
+        merged_settings.update(settings)
 
         return cls(
             player_name=player_name,
@@ -65,7 +76,7 @@ class GameState:
             story_direction=str(data.get("story_direction", "")),
             scene_memory=str(data.get("scene_memory", "")),
             chat_history=chat_history,
-            settings=settings,
+            settings=merged_settings,
         )
 
     @staticmethod

@@ -6,10 +6,15 @@ from typing import Callable
 from context_builder import ContextBuilder
 from llm_client import LLMClient, LLMClientError
 from memory_manager import MemoryManager
-from models import GameState
+from models import DEFAULT_SETTINGS, GameState
 from prompts import ENHANCE_PROMPT
 
 logger = logging.getLogger(__name__)
+
+TEMPERATURE_RANGE = (0.5, 0.9)
+TOP_P_RANGE = (0.8, 0.95)
+PRESENCE_PENALTY_RANGE = (0.0, 0.6)
+FREQUENCY_PENALTY_RANGE = (0.0, 0.5)
 
 
 class ChatController:
@@ -174,32 +179,50 @@ class ChatController:
         max_tokens: int,
         prompt_debug: bool,
     ) -> None:
-        self.state.settings["temperature"] = temperature
-        self.state.settings["top_p"] = top_p
-        self.state.settings["presence_penalty"] = presence_penalty
-        self.state.settings["frequency_penalty"] = frequency_penalty
+        self.state.settings["temperature"] = self._clamp_float(temperature, *TEMPERATURE_RANGE)
+        self.state.settings["top_p"] = self._clamp_float(top_p, *TOP_P_RANGE)
+        self.state.settings["presence_penalty"] = self._clamp_float(
+            presence_penalty,
+            *PRESENCE_PENALTY_RANGE,
+        )
+        self.state.settings["frequency_penalty"] = self._clamp_float(
+            frequency_penalty,
+            *FREQUENCY_PENALTY_RANGE,
+        )
         self.state.settings["max_tokens"] = max(1, int(max_tokens))
         self.state.settings["prompt_debug"] = bool(prompt_debug)
 
     def _generation_params(self) -> dict[str, float | int]:
         return {
-            "temperature": float(self.state.settings.get("temperature", 0.7)),
-            "top_p": float(self.state.settings.get("top_p", 1.0)),
-            "presence_penalty": float(self.state.settings.get("presence_penalty", 0.0)),
-            "frequency_penalty": float(self.state.settings.get("frequency_penalty", 0.0)),
+            "temperature": float(self.state.settings.get("temperature", DEFAULT_SETTINGS["temperature"])),
+            "top_p": float(self.state.settings.get("top_p", DEFAULT_SETTINGS["top_p"])),
+            "presence_penalty": float(
+                self.state.settings.get("presence_penalty", DEFAULT_SETTINGS["presence_penalty"])
+            ),
+            "frequency_penalty": float(
+                self.state.settings.get("frequency_penalty", DEFAULT_SETTINGS["frequency_penalty"])
+            ),
             "max_tokens": self._get_max_tokens(),
         }
 
     def _get_max_tokens(self) -> int:
-        value = self.state.settings.get("max_tokens", 150)
+        value = self.state.settings.get("max_tokens", DEFAULT_SETTINGS["max_tokens"])
         try:
             max_tokens = int(value)
         except (TypeError, ValueError):
-            return 150
+            return int(DEFAULT_SETTINGS["max_tokens"])
         return max(1, max_tokens)
 
     def get_max_tokens(self) -> int:
         return self._get_max_tokens()
+
+    def _clamp_float(self, value: float, min_value: float, max_value: float) -> float:
+        parsed = float(value)
+        if parsed < min_value:
+            return min_value
+        if parsed > max_value:
+            return max_value
+        return parsed
 
     def _normalize_turn_text(self, speaker: str, text: str) -> str:
         message = str(text).strip()

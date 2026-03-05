@@ -57,6 +57,7 @@ python src/main.py
 
 ```text
 rpg_client_project/
+  CHANGELOG.md
   docs/
     architecture.md
     coding_rules.md
@@ -95,3 +96,9 @@ Detailed design and implementation specs are in `docs/`:
 - `context_builder_design.md`
 - `ui_layout_spec.md`
 - `coding_rules.md`
+
+## Change Tracking
+
+Use `CHANGELOG.md` for incremental project updates and behavior changes.
+
+As a default workflow, add a changelog entry for new changes instead of updating spec docs on every small iteration.

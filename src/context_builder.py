@@ -28,7 +28,7 @@ class ContextBuilder:
         """
         system_message = {
             "role": "system",
-            "content": SYSTEM_PROMPT.format(character_name=state.character_name),
+            "content": self._build_system_prompt(state, next_speaker),
         }
 
         context_message = {
@@ -136,7 +136,7 @@ class ContextBuilder:
         messages: list[dict[str, str]] = [
             {
                 "role": "system",
-                "content": SYSTEM_PROMPT.format(character_name=state.character_name),
+                "content": self._build_system_prompt(state, next_speaker),
             },
             {
                 "role": "user",
@@ -161,4 +161,12 @@ class ContextBuilder:
         if normalized == "character":
             return "assistant"
         return "user"
+
+    def _build_system_prompt(self, state: GameState, next_speaker: str) -> str:
+        normalized = str(next_speaker).strip().lower()
+        if normalized == "player":
+            active_name = state.player_name.strip() or "Player"
+        else:
+            active_name = state.character_name.strip() or "Character"
+        return SYSTEM_PROMPT.format(character_name=active_name)
 

@@ -68,7 +68,25 @@ ENHANCE_PROMPT = """Rewrite the following roleplay message to improve atmosphere
 
 Keep the meaning the same.
 
-Write one paragraph.
+Rules:
+
+Write in third person past tense.
+
+Write exactly one paragraph.
+
+Keep responses moderate in length.
+
+Use "quotes" for dialogue.
+
+Use _underscores_ for thoughts.
+
+Use *asterisks* for sounds.
+
+Do not write actions or dialogue for other characters.
+
+Stay in character.
+
+Do not prepend speaker labels like "Character:" or "Player:".
 
 Original message:
 {user_message}
