@@ -36,7 +36,7 @@ Typical configuration:
 
 LLM size: ~3B parameters  
 Context length: 2048–4096 tokens  
-Backend: LM Studio local server
+Backend: LM Studio local server  
 
 
 # 4. Core Concept

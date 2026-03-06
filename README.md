@@ -4,6 +4,10 @@ Desktop tkinter application for roleplay chat with local LLM models through LM S
 
 The project is optimized for small local models (~3B parameters) and short context windows (2048-4096 tokens).
 
+Primary tested LLM model: `Llama 3.2 3B Instruct`.
+
+The application is not designed or validated for reasoning-focused models (`thinking` models): they typically produce significantly longer responses and have less predictable token consumption, which can degrade UX and context budgeting behavior.
+
 ## Features
 
 - Roleplay chat with `Player` and `Character` turns
@@ -52,6 +56,8 @@ python src/main.py
 - Cut: `Ctrl+X` or `Shift+Delete`
 - Paste: `Ctrl+V` or `Shift+Insert`
 - Select all: `Ctrl+A`
+- Undo: `Ctrl+Z`
+- Redo: `Ctrl+Y`
 
 ## Project Structure
 

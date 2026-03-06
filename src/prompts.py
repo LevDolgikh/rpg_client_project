@@ -1,8 +1,4 @@
-﻿SYSTEM_PROMPT = """You are roleplaying as {character_name}.
-
-Rules:
-
-Write in third person past tense.
+COMMON_ROLEPLAY_RULES = """Write in third person past tense.
 
 Write exactly one paragraph.
 
@@ -19,6 +15,13 @@ Do not write actions or dialogue for other characters.
 Stay in character.
 
 Do not prepend speaker labels like "Character:" or "Player:"."""
+
+
+SYSTEM_PROMPT = f"""You are roleplaying as {{character_name}}.
+
+Rules:
+
+{COMMON_ROLEPLAY_RULES}"""
 
 
 CONTEXT_TEMPLATE = """[Context]
@@ -64,32 +67,29 @@ Chat history:
 Summary:"""
 
 
-ENHANCE_PROMPT = """Rewrite the following roleplay message to improve atmosphere and description.
+ENHANCE_PROMPT = f"""Rewrite the following roleplay message to improve atmosphere and description.
 
 Keep the meaning the same.
 
+Respect the current scene context and recent dialogue.
+
+Do not introduce contradictions with established facts.
+
 Rules:
 
-Write in third person past tense.
+{COMMON_ROLEPLAY_RULES}
 
-Write exactly one paragraph.
+Speaker:
+{{speaker}}
 
-Keep responses moderate in length.
+Context:
+{{context_block}}
 
-Use "quotes" for dialogue.
-
-Use _underscores_ for thoughts.
-
-Use *asterisks* for sounds.
-
-Do not write actions or dialogue for other characters.
-
-Stay in character.
-
-Do not prepend speaker labels like "Character:" or "Player:".
+Recent chat history:
+{{chat_history}}
 
 Original message:
-{user_message}
+{{user_message}}
 
 
 Enhanced version:"""

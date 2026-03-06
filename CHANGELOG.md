@@ -4,6 +4,17 @@ All notable project changes are recorded here.
 
 This file follows a simple Keep a Changelog style with versioned releases.
 
+## [Unreleased]
+
+## [1.02] - 2026-03-06
+
+### Changed
+- Refactored `src/prompts.py` to remove duplicated LLM roleplay rules by extracting shared text into `COMMON_ROLEPLAY_RULES` and reusing it in `SYSTEM_PROMPT` and `ENHANCE_PROMPT`.
+- Improved `Chat History` readability in `src/ui.py` and `src/chat_controller.py` by rendering chat turns with a blank line separator between messages (including transient streaming output).
+- Fixed clipboard shortcuts in `src/ui.py` for non-English keyboard layouts (including Russian), so `Ctrl+C/X/V/A` works reliably in text fields.
+- Added undo/redo keyboard support in editable text fields: `Ctrl+Z` (undo) and `Ctrl+Y` (redo), with non-English layout handling in `src/ui.py`.
+- Fixed `Enhance Message` flow in `src/chat_controller.py`/`src/ui.py` so rewriting now uses selected speaker, current context fields, and trimmed recent chat history instead of rewriting in isolation.
+
 ## [1.01] - 2026-03-05
 
 ### Added

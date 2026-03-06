@@ -141,21 +141,27 @@ class RPGChatUI:
         frame.pack(fill=tk.BOTH, padx=10, pady=6)
 
         ttk.Label(frame, text="Player Description").grid(row=0, column=0, sticky="w", padx=6, pady=(6, 2))
-        self.player_description_text = ScrolledText(frame, height=5, wrap=tk.WORD)
+        self.player_description_text = ScrolledText(
+            frame, height=5, wrap=tk.WORD, undo=True, autoseparators=True, maxundo=-1
+        )
         self.player_description_text.grid(row=1, column=0, sticky="nsew", padx=6, pady=2)
         ttk.Label(frame, text="Write short lines. One line = one idea.").grid(
             row=2, column=0, sticky="w", padx=6, pady=(0, 6)
         )
 
         ttk.Label(frame, text="Character Description").grid(row=3, column=0, sticky="w", padx=6, pady=(6, 2))
-        self.character_description_text = ScrolledText(frame, height=5, wrap=tk.WORD)
+        self.character_description_text = ScrolledText(
+            frame, height=5, wrap=tk.WORD, undo=True, autoseparators=True, maxundo=-1
+        )
         self.character_description_text.grid(row=4, column=0, sticky="nsew", padx=6, pady=2)
         ttk.Label(frame, text="Write short lines. One line = one idea.").grid(
             row=5, column=0, sticky="w", padx=6, pady=(0, 6)
         )
 
         ttk.Label(frame, text="World Scenario").grid(row=6, column=0, sticky="w", padx=6, pady=(6, 2))
-        self.world_scenario_text = ScrolledText(frame, height=6, wrap=tk.WORD)
+        self.world_scenario_text = ScrolledText(
+            frame, height=6, wrap=tk.WORD, undo=True, autoseparators=True, maxundo=-1
+        )
         self.world_scenario_text.grid(row=7, column=0, sticky="nsew", padx=6, pady=2)
         ttk.Label(frame, text="Write short lines. One line = one idea.").grid(
             row=8, column=0, sticky="w", padx=6, pady=(0, 6)
@@ -167,7 +173,9 @@ class RPGChatUI:
         frame = ttk.LabelFrame(self.content_frame, text="Character Goal")
         frame.pack(fill=tk.BOTH, padx=10, pady=6)
 
-        self.character_goal_text = ScrolledText(frame, height=5, wrap=tk.WORD)
+        self.character_goal_text = ScrolledText(
+            frame, height=5, wrap=tk.WORD, undo=True, autoseparators=True, maxundo=-1
+        )
         self.character_goal_text.pack(fill=tk.BOTH, expand=True, padx=6, pady=(6, 2))
         ttk.Label(
             frame,
@@ -178,7 +186,9 @@ class RPGChatUI:
         frame = ttk.LabelFrame(self.content_frame, text="Story Direction")
         frame.pack(fill=tk.BOTH, padx=10, pady=6)
 
-        self.story_direction_text = ScrolledText(frame, height=5, wrap=tk.WORD)
+        self.story_direction_text = ScrolledText(
+            frame, height=5, wrap=tk.WORD, undo=True, autoseparators=True, maxundo=-1
+        )
         self.story_direction_text.pack(fill=tk.BOTH, expand=True, padx=6, pady=(6, 2))
         ttk.Label(
             frame,
@@ -189,7 +199,9 @@ class RPGChatUI:
         frame = ttk.LabelFrame(self.content_frame, text="Scene Memory")
         frame.pack(fill=tk.BOTH, padx=10, pady=6)
 
-        self.scene_memory_text = ScrolledText(frame, height=6, wrap=tk.WORD)
+        self.scene_memory_text = ScrolledText(
+            frame, height=6, wrap=tk.WORD, undo=True, autoseparators=True, maxundo=-1
+        )
         self.scene_memory_text.pack(fill=tk.BOTH, expand=True, padx=6, pady=(6, 2))
         ttk.Label(
             frame,
@@ -211,7 +223,9 @@ class RPGChatUI:
         frame = ttk.LabelFrame(self.content_frame, text="Message Input")
         frame.pack(fill=tk.BOTH, padx=10, pady=6)
 
-        self.message_input_text = ScrolledText(frame, height=4, wrap=tk.WORD)
+        self.message_input_text = ScrolledText(
+            frame, height=4, wrap=tk.WORD, undo=True, autoseparators=True, maxundo=-1
+        )
         self.message_input_text.pack(fill=tk.BOTH, expand=True, padx=6, pady=6)
 
         selector_row = ttk.Frame(frame)
@@ -383,13 +397,9 @@ class RPGChatUI:
         self._bind_clipboard_shortcuts()
 
     def _bind_clipboard_shortcuts(self) -> None:
+        # Keep default Tk bindings for Ctrl+C/X/V to avoid platform/layout regressions.
+        # Add only alternative clipboard shortcuts explicitly.
         clipboard_events = {
-            "<Control-c>": "<<Copy>>",
-            "<Control-C>": "<<Copy>>",
-            "<Control-x>": "<<Cut>>",
-            "<Control-X>": "<<Cut>>",
-            "<Control-v>": "<<Paste>>",
-            "<Control-V>": "<<Paste>>",
             "<Control-Insert>": "<<Copy>>",
             "<Shift-Insert>": "<<Paste>>",
             "<Shift-Delete>": "<<Cut>>",
@@ -403,6 +413,12 @@ class RPGChatUI:
                     lambda event, ve=virtual_event: self._forward_virtual_event(event, ve),
                     add="+",
                 )
+            self.root.bind_class(
+                class_name,
+                "<Control-KeyPress>",
+                self._on_control_keypress,
+                add="+",
+            )
 
             self.root.bind_class(
                 class_name,
@@ -420,6 +436,37 @@ class RPGChatUI:
     def _forward_virtual_event(self, event: tk.Event, virtual_event: str) -> str:
         event.widget.event_generate(virtual_event)
         return "break"
+
+    def _on_control_keypress(self, event: tk.Event) -> str | None:
+        keycode = int(getattr(event, "keycode", -1))
+        keysym = str(getattr(event, "keysym", "")).lower()
+
+        copy_keysyms = {"c", "cyrillic_es"}
+        cut_keysyms = {"x", "cyrillic_che"}
+        paste_keysyms = {"v", "cyrillic_em"}
+        select_all_keysyms = {"a", "cyrillic_ef"}
+        undo_keysyms = {"z", "cyrillic_ya"}
+        redo_keysyms = {"y", "cyrillic_en"}
+
+        if keycode == 67 or keysym in copy_keysyms:
+            event.widget.event_generate("<<Copy>>")
+            return "break"
+        if keycode == 88 or keysym in cut_keysyms:
+            event.widget.event_generate("<<Cut>>")
+            return "break"
+        if keycode == 86 or keysym in paste_keysyms:
+            event.widget.event_generate("<<Paste>>")
+            return "break"
+        if keycode == 65 or keysym in select_all_keysyms:
+            return self._on_select_all(event)
+        if keycode == 90 or keysym in undo_keysyms:
+            event.widget.event_generate("<<Undo>>")
+            return "break"
+        if keycode == 89 or keysym in redo_keysyms:
+            event.widget.event_generate("<<Redo>>")
+            return "break"
+
+        return None
 
     def _on_select_all(self, event: tk.Event) -> str:
         widget = event.widget
@@ -644,11 +691,12 @@ class RPGChatUI:
 
         self._push_fields_to_state()
         text = self._read_text(self.message_input_text)
+        speaker = self.speaker_var.get().strip() or "Player"
         if not text:
             return
 
         try:
-            enhanced = self.controller.enhance_message(text)
+            enhanced = self.controller.enhance_message(speaker, text)
         except LLMClientError as exc:
             messagebox.showerror("Enhance Error", str(exc))
             return
@@ -803,13 +851,14 @@ class RPGChatUI:
         self.stop_button.configure(state=tk.NORMAL)
 
     def refresh_chat_history(self, transient_turn: tuple[str, str] | None = None) -> None:
-        lines = self.controller.get_chat_history_text().splitlines() if self.state.chat_history else []
+        chat_history_text = self.controller.get_chat_history_text() if self.state.chat_history else ""
         if transient_turn is not None and transient_turn[1]:
-            lines.append(f"{transient_turn[0]}: {transient_turn[1]}")
+            transient_text = f"{transient_turn[0]}: {transient_turn[1]}"
+            chat_history_text = f"{chat_history_text}\n\n{transient_text}" if chat_history_text else transient_text
 
         self.chat_history_text.configure(state=tk.NORMAL)
         self.chat_history_text.delete("1.0", tk.END)
-        self.chat_history_text.insert("1.0", "\n".join(lines))
+        self.chat_history_text.insert("1.0", chat_history_text)
         self.chat_history_text.configure(state=tk.DISABLED)
         self.chat_history_text.see(tk.END)
 

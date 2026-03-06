@@ -45,7 +45,7 @@ class ChatController:
         return turn
 
     def get_chat_history_text(self) -> str:
-        return "\n".join(f"{speaker}: {text}" for speaker, text in self.state.chat_history)
+        return "\n\n".join(f"{speaker}: {text}" for speaker, text in self.state.chat_history)
 
     def delete_last_message(self) -> tuple[str, str] | None:
         """Delete and return the latest chat turn, if present."""
@@ -94,13 +94,28 @@ class ChatController:
 
         return normalized_response
 
-    def enhance_message(self, message: str) -> str:
+    def enhance_message(self, speaker: str, message: str) -> str:
         """Rewrite a message in richer roleplay style."""
-        original = str(message).strip()
+        clean_speaker = str(speaker).strip() or "Player"
+        original = self._normalize_turn_text(clean_speaker, str(message))
         if not original:
             return ""
 
-        prompt = ENHANCE_PROMPT.format(user_message=original)
+        trimmed_history = self.context_builder.trim_history(
+            state=self.state,
+            next_speaker=clean_speaker,
+            user_input=original,
+            response_reserve_tokens=self._get_max_tokens(),
+        )
+        history_text = "\n".join(f"{turn_speaker}: {turn_text}" for turn_speaker, turn_text in trimmed_history)
+        context_block = self.context_builder.build_context_block(self.state)
+
+        prompt = ENHANCE_PROMPT.format(
+            speaker=clean_speaker,
+            context_block=context_block,
+            chat_history=history_text if history_text else "(no chat history)",
+            user_message=original,
+        )
         messages = [{"role": "user", "content": prompt}]
 
         try:
