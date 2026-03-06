@@ -2,6 +2,21 @@
 
 All notable project changes are recorded here.
 
+## [2.01] - 2026-03-06
+
+### Notes
+- This release is primarily a bug-fix pass for issues introduced by the migration shipped in `2.00`.
+
+### Changed
+- Normalized character responses to a single paragraph in `src/chat_controller.py` by collapsing newline characters into spaces and trimming duplicate whitespace.
+- Applied the same normalization to transient streaming text in `src/ui.py`, so streamed output no longer shows multi-line paragraph breaks before final save.
+- Fixed generation parameter plumbing in `src/chat_controller.py`: Advanced `Max Tokens` is now passed to LM Studio requests and no longer silently ignored.
+- Removed the unused hidden `max_chat_messages` limiter from `src/context_builder.py` to keep trimming strictly token-limit based.
+- Added persistent context limit setting `context_limit` in `src/models.py` and synchronized it in `src/ui.py`, so `Memory Limit` now survives save/load and is applied on startup.
+- Changed summary behavior in `src/chat_controller.py`: `Make Summary` now appends to existing `Scene Memory` instead of replacing it.
+- Added visible LLM activity indicator in `src/ui.py` (`LLM: ...` status + indeterminate progress bar) during response generation, redo, and summary.
+- Moved summary execution in `src/ui.py` to a background worker with queue polling, so the UI no longer appears frozen while summary is being generated.
+
 ## [2.00] - 2026-03-06
 
 ### Changed

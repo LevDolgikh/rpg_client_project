@@ -23,6 +23,7 @@ class RPGChatUI:
 
         self._stream_queue: Queue[tuple[str, str]] = Queue()
         self._streaming = False
+        self._summary_running = False
         self._stream_speaker = ""
         self._stream_buffer = ""
         self._last_request_tokens = 0
@@ -31,7 +32,13 @@ class RPGChatUI:
         self.player_name_var = StringVar(value=self.state.player_name)
         self.character_name_var = StringVar(value=self.state.character_name)
         self.server_status_var = StringVar(value="LM Studio: Unknown")
-        self.memory_limit_var = StringVar(value=str(self.controller.get_memory_limit()))
+        self.llm_status_var = StringVar(value="LLM: Idle")
+        initial_context_limit = self._safe_int(
+            str(self.state.settings.get("context_limit", self.controller.get_memory_limit())),
+            self.controller.get_memory_limit(),
+        )
+        self.controller.set_memory_limit(initial_context_limit)
+        self.memory_limit_var = StringVar(value=str(initial_context_limit))
 
         self.temperature_var = StringVar(
             value=str(self.state.settings.get("temperature", DEFAULT_SETTINGS["temperature"]))
@@ -215,10 +222,16 @@ class RPGChatUI:
         frame = ttk.LabelFrame(self.content_frame, text="Controls")
         frame.pack(fill=tk.X, padx=10, pady=6)
 
+        status_row = ttk.Frame(frame)
+        status_row.grid(row=0, column=0, sticky="ew", padx=6, pady=(6, 0))
+        ttk.Label(status_row, textvariable=self.llm_status_var).pack(side=tk.LEFT, padx=(0, 8))
+        self.llm_progress = ttk.Progressbar(status_row, mode="indeterminate", length=120)
+        self.llm_progress.pack(side=tk.LEFT)
+
         chat_frame = ttk.LabelFrame(frame, text="Chat")
-        chat_frame.grid(row=0, column=0, sticky="ew", padx=6, pady=6)
+        chat_frame.grid(row=1, column=0, sticky="ew", padx=6, pady=6)
         persistence_frame = ttk.LabelFrame(frame, text="Persistence")
-        persistence_frame.grid(row=1, column=0, sticky="ew", padx=6, pady=(0, 6))
+        persistence_frame.grid(row=2, column=0, sticky="ew", padx=6, pady=(0, 6))
 
         primary_chat_frame = ttk.LabelFrame(chat_frame, text="Primary")
         primary_chat_frame.grid(row=0, column=0, sticky="ew", padx=6, pady=6)
@@ -557,6 +570,7 @@ class RPGChatUI:
             self.controller.get_memory_limit(),
         )
         self.controller.set_memory_limit(new_limit)
+        self.state.settings["context_limit"] = new_limit
 
     def _safe_float(self, value: str, default: float) -> float:
         try:
@@ -598,7 +612,7 @@ class RPGChatUI:
             self.server_status_var.set("LM Studio: Disconnected")
 
     def _on_send_message(self) -> None:
-        if self._streaming:
+        if self._streaming or self._summary_running:
             return
 
         self._push_fields_to_state()
@@ -617,6 +631,7 @@ class RPGChatUI:
         self._stream_speaker = self.state.character_name.strip() or "Character"
         self._stream_buffer = ""
         self._set_generation_controls_enabled(False)
+        self._set_llm_busy("Generating response...")
 
         thread = threading.Thread(target=self._stream_generation_worker, daemon=True)
         thread.start()
@@ -643,13 +658,15 @@ class RPGChatUI:
             had_event = True
             if kind == "chunk":
                 self._stream_buffer += payload
-                self.refresh_chat_history(transient_turn=(self._stream_speaker, self._stream_buffer))
+                normalized_stream_text = self.controller.normalize_character_text(self._stream_buffer)
+                self.refresh_chat_history(transient_turn=(self._stream_speaker, normalized_stream_text))
             elif kind == "done":
                 self._last_request_tokens = self.controller.estimate_text_tokens(payload)
                 self._streaming = False
                 self._stream_speaker = ""
                 self._stream_buffer = ""
                 self._set_generation_controls_enabled(True)
+                self._set_llm_idle()
                 self.refresh_chat_history()
                 self.update_token_monitor()
             elif kind == "error":
@@ -657,15 +674,34 @@ class RPGChatUI:
                 self._stream_speaker = ""
                 self._stream_buffer = ""
                 self._set_generation_controls_enabled(True)
+                self._set_llm_idle()
                 messagebox.showerror("Generation Error", payload)
                 self.refresh_chat_history()
                 self.update_token_monitor()
+            elif kind == "summary_done":
+                summary = payload
+                self._summary_running = False
+                self._set_generation_controls_enabled(True)
+                self._set_llm_idle()
+                if summary:
+                    self.scene_memory_text.delete("1.0", tk.END)
+                    self.scene_memory_text.insert("1.0", self.state.scene_memory)
+                    self._last_request_tokens = self.controller.estimate_text_tokens(summary)
+                self.refresh_chat_history()
+                self.update_token_monitor()
+            elif kind == "summary_error":
+                self._summary_running = False
+                self._set_generation_controls_enabled(True)
+                self._set_llm_idle()
+                messagebox.showerror("Summary Error", payload)
+                self.refresh_chat_history()
+                self.update_token_monitor()
 
-        if self._streaming or had_event:
+        if self._streaming or self._summary_running or had_event:
             self.root.after(50, self._poll_stream_queue)
 
     def _on_redo_response(self) -> None:
-        if self._streaming:
+        if self._streaming or self._summary_running:
             return
 
         self._push_fields_to_state()
@@ -683,6 +719,7 @@ class RPGChatUI:
         self._stream_speaker = self.state.character_name.strip() or "Character"
         self._stream_buffer = ""
         self._set_generation_controls_enabled(False)
+        self._set_llm_busy("Regenerating response...")
 
         thread = threading.Thread(target=self._redo_stream_worker, daemon=True)
         thread.start()
@@ -699,26 +736,27 @@ class RPGChatUI:
             self._stream_queue.put(("error", str(exc)))
 
     def _on_make_summary(self) -> None:
-        if self._streaming:
+        if self._streaming or self._summary_running:
             return
 
         self._push_fields_to_state()
+        self._summary_running = True
+        self._set_generation_controls_enabled(False)
+        self._set_llm_busy("Building summary...")
+
+        thread = threading.Thread(target=self._summary_worker, daemon=True)
+        thread.start()
+        self.root.after(50, self._poll_stream_queue)
+
+    def _summary_worker(self) -> None:
         try:
             summary = self.controller.make_summary()
+            self._stream_queue.put(("summary_done", summary))
         except Exception as exc:
-            messagebox.showerror("Summary Error", str(exc))
-            return
-
-        if summary:
-            self.scene_memory_text.delete("1.0", tk.END)
-            self.scene_memory_text.insert("1.0", self.state.scene_memory)
-            self._last_request_tokens = self.controller.estimate_text_tokens(summary)
-
-        self.refresh_chat_history()
-        self.update_token_monitor()
+            self._stream_queue.put(("summary_error", str(exc)))
 
     def _on_delete_last_message(self) -> None:
-        if self._streaming:
+        if self._streaming or self._summary_running:
             return
         self._push_fields_to_state()
         self.controller.delete_last_message()
@@ -745,7 +783,7 @@ class RPGChatUI:
             messagebox.showerror("Save Error", str(exc))
 
     def _on_load_game(self) -> None:
-        if self._streaming:
+        if self._streaming or self._summary_running:
             return
 
         path = filedialog.askopenfilename(
@@ -805,6 +843,12 @@ class RPGChatUI:
         self.prompt_debug_var.set(
             bool(self.state.settings.get("prompt_debug", DEFAULT_SETTINGS["prompt_debug"]))
         )
+        loaded_context_limit = self._safe_int(
+            str(self.state.settings.get("context_limit", self.controller.get_memory_limit())),
+            self.controller.get_memory_limit(),
+        )
+        self.controller.set_memory_limit(loaded_context_limit)
+        self.memory_limit_var.set(str(loaded_context_limit))
 
     def _set_generation_controls_enabled(self, enabled: bool) -> None:
         state = tk.NORMAL if enabled else tk.DISABLED
@@ -815,6 +859,14 @@ class RPGChatUI:
         self.save_button.configure(state=state)
         self.load_button.configure(state=state)
         self.stop_button.configure(state=tk.NORMAL)
+
+    def _set_llm_busy(self, message: str) -> None:
+        self.llm_status_var.set(f"LLM: {message}")
+        self.llm_progress.start(10)
+
+    def _set_llm_idle(self) -> None:
+        self.llm_status_var.set("LLM: Idle")
+        self.llm_progress.stop()
 
     def refresh_chat_history(self, transient_turn: tuple[str, str] | None = None) -> None:
         chat_history_text = self.controller.get_chat_history_text() if self.state.chat_history else ""

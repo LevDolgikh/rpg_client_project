@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from typing import Callable
 
 from context_builder import ContextBuilder
@@ -72,7 +73,7 @@ class ChatController:
         messages = self.context_builder.build_messages(
             state=self.state,
             user_input="",
-            response_reserve_tokens=self._get_max_tokens(),
+            response_reserve_tokens=0,
         )
 
         params = self._generation_params()
@@ -84,18 +85,21 @@ class ChatController:
                     chunks.append(chunk)
                     if on_stream_token is not None:
                         on_stream_token(chunk)
-                response_text = "".join(chunks).strip()
+                response_text = "".join(chunks)
             else:
                 response_text = self.llm_client.generate(messages, **params)
         except LLMClientError:
             logger.exception("Character generation failed.")
             raise
 
+        response_text = self.normalize_character_text(response_text)
+
         normalized_response = GameState._normalize_turn_text(
             text=response_text,
             player_name=self.state.player_name,
             character_name=self.state.character_name,
         )
+        normalized_response = self.normalize_character_text(normalized_response)
         if normalized_response:
             self.state.chat_history.append({"speaker": "character", "text": normalized_response})
 
@@ -135,7 +139,7 @@ class ChatController:
         summary = self.memory_manager.summarize_and_replace_history(
             state=self.state,
             messages_to_summarize=messages_to_summarize,
-            append_scene_memory=False,
+            append_scene_memory=True,
         )
         return summary
 
@@ -155,11 +159,16 @@ class ChatController:
     def estimate_text_tokens(self, text: str) -> int:
         return self.context_builder.token_manager.estimate_tokens(text)
 
+    @staticmethod
+    def normalize_character_text(text: str) -> str:
+        """Force model output into a single paragraph for display/history consistency."""
+        collapsed_newlines = re.sub(r"[\r\n]+", " ", str(text))
+        return re.sub(r"\s{2,}", " ", collapsed_newlines).strip()
+
     def preview_context_tokens(self, user_input: str = "") -> tuple[int, int]:
-        messages = self.context_builder.build_messages(
+        messages = self.context_builder.build_preview_messages(
             state=self.state,
             user_input=user_input,
-            response_reserve_tokens=self.get_max_tokens(),
         )
         used = self.context_builder.token_manager.count_tokens(messages=messages)
         return used, self.context_builder.token_manager.max_tokens
@@ -196,6 +205,7 @@ class ChatController:
             "frequency_penalty": float(
                 self.state.settings.get("frequency_penalty", DEFAULT_SETTINGS["frequency_penalty"])
             ),
+            "max_tokens": self._get_max_tokens(),
         }
 
     def _get_max_tokens(self) -> int:

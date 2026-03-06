@@ -8,15 +8,14 @@ from token_manager import TokenManager
 class ContextBuilder:
     """Builds structured LLM messages from the current game state."""
 
-    def __init__(self, token_manager: TokenManager, max_chat_messages: int = 16) -> None:
+    def __init__(self, token_manager: TokenManager) -> None:
         self.token_manager = token_manager
-        self.max_chat_messages = max_chat_messages
 
     def build_messages(
         self,
         state: GameState,
         user_input: str = "",
-        response_reserve_tokens: int = 150,
+        response_reserve_tokens: int = 0,
     ) -> list[dict[str, str]]:
         """
         Assemble messages in strict order:
@@ -42,6 +41,38 @@ class ContextBuilder:
             response_reserve_tokens=response_reserve_tokens,
         )
         messages.extend(self.build_chat_history(history))
+
+        clean_input = GameState._normalize_turn_text(
+            text=user_input,
+            player_name=state.player_name,
+            character_name=state.character_name,
+        )
+        if clean_input:
+            messages.append({"role": "user", "content": clean_input})
+
+        return messages
+
+    def build_preview_messages(
+        self,
+        state: GameState,
+        user_input: str = "",
+    ) -> list[dict[str, str]]:
+        """
+        Assemble messages for token monitor without budget-based trimming.
+        This keeps the monitor stable while typing.
+        """
+        messages: list[dict[str, str]] = [
+            {
+                "role": "system",
+                "content": self._build_system_prompt(state),
+            },
+            {
+                "role": "user",
+                "content": self.build_context_block(state),
+            },
+        ]
+
+        messages.extend(self.build_chat_history(list(state.chat_history)))
 
         clean_input = GameState._normalize_turn_text(
             text=user_input,
@@ -93,12 +124,10 @@ class ContextBuilder:
         self,
         state: GameState,
         user_input: str = "",
-        response_reserve_tokens: int = 150,
+        response_reserve_tokens: int = 0,
     ) -> list[dict[str, str]]:
         """Trim oldest chat messages first until token budget fits."""
         history = list(state.chat_history)
-        if self.max_chat_messages > 0 and len(history) > self.max_chat_messages:
-            history = history[-self.max_chat_messages :]
 
         while history:
             candidate_messages = self._build_candidate_messages(

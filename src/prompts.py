@@ -50,15 +50,14 @@ One line = one event.
 
 Avoid long explanations.
 
-Example output:
+Use only facts from Chat history.
 
-Player arrived in abandoned town
-Character distrusts Player
-Bell rings at midnight
+Do not copy templates or examples.
 
+Do not add headings, introductions, or closing lines.
 
 Chat history:
 {chat_history}
 
 
-Summary:"""
+Summary (lines only):"""

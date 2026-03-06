@@ -9,6 +9,7 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "presence_penalty": 0.3,
     "frequency_penalty": 0.2,
     "max_tokens": 120,
+    "context_limit": 4096,
     "prompt_debug": False,
 }
 
