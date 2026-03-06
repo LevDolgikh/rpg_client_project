@@ -1,4 +1,4 @@
-﻿# RPG Chat Client (v2.00)
+﻿# RPG Chat Client (v2.01)
 
 Desktop tkinter app for roleplay chat with local LLMs via LM Studio (OpenAI-compatible API).
 
