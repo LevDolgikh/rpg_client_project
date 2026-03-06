@@ -10,7 +10,6 @@ from tkinter import ttk
 from tkinter.scrolledtext import ScrolledText
 
 from chat_controller import ChatController
-from llm_client import LLMClientError
 from models import DEFAULT_SETTINGS, GameState
 
 logger = logging.getLogger(__name__)
@@ -27,12 +26,10 @@ class RPGChatUI:
         self._stream_speaker = ""
         self._stream_buffer = ""
         self._last_request_tokens = 0
-        self._last_prompt_debug_signature: tuple[int, int, str, int] | None = None
+        self._last_prompt_debug_signature: tuple[int, int, int] | None = None
 
         self.player_name_var = StringVar(value=self.state.player_name)
         self.character_name_var = StringVar(value=self.state.character_name)
-        self.speaker_var = StringVar(value="Player")
-
         self.server_status_var = StringVar(value="LM Studio: Unknown")
         self.memory_limit_var = StringVar(value=str(self.controller.get_memory_limit()))
 
@@ -70,7 +67,7 @@ class RPGChatUI:
         self.update_token_monitor()
 
     def _configure_root(self) -> None:
-        self.root.title("RPG Chat Client")
+        self.root.title("RPG Chat Client v2.00")
         self.root.geometry("960x900")
         self.root.minsize(820, 700)
 
@@ -97,8 +94,7 @@ class RPGChatUI:
         self._build_server_status_section()
         self._build_character_setup_section()
         self._build_descriptions_section()
-        self._build_character_goal_section()
-        self._build_story_direction_section()
+        self._build_story_intent_section()
         self._build_scene_memory_section()
         self._build_chat_history_section()
         self._build_message_input_section()
@@ -158,41 +154,28 @@ class RPGChatUI:
             row=5, column=0, sticky="w", padx=6, pady=(0, 6)
         )
 
-        ttk.Label(frame, text="World Scenario").grid(row=6, column=0, sticky="w", padx=6, pady=(6, 2))
+        ttk.Label(frame, text="World Description").grid(row=6, column=0, sticky="w", padx=6, pady=(6, 2))
         self.world_scenario_text = ScrolledText(
             frame, height=6, wrap=tk.WORD, undo=True, autoseparators=True, maxundo=-1
         )
         self.world_scenario_text.grid(row=7, column=0, sticky="nsew", padx=6, pady=2)
-        ttk.Label(frame, text="Write short lines. One line = one idea.").grid(
+        ttk.Label(frame, text="Describe world rules, factions, places, and atmosphere.").grid(
             row=8, column=0, sticky="w", padx=6, pady=(0, 6)
         )
 
         frame.columnconfigure(0, weight=1)
 
-    def _build_character_goal_section(self) -> None:
-        frame = ttk.LabelFrame(self.content_frame, text="Character Goal")
+    def _build_story_intent_section(self) -> None:
+        frame = ttk.LabelFrame(self.content_frame, text="Story Intent")
         frame.pack(fill=tk.BOTH, padx=10, pady=6)
 
-        self.character_goal_text = ScrolledText(
+        self.story_intent_text = ScrolledText(
             frame, height=5, wrap=tk.WORD, undo=True, autoseparators=True, maxundo=-1
         )
-        self.character_goal_text.pack(fill=tk.BOTH, expand=True, padx=6, pady=(6, 2))
+        self.story_intent_text.pack(fill=tk.BOTH, expand=True, padx=6, pady=(6, 2))
         ttk.Label(
             frame,
-            text="Write short lines with the Character's goals or hidden intentions.",
-        ).pack(anchor="w", padx=6, pady=(0, 6))
-
-    def _build_story_direction_section(self) -> None:
-        frame = ttk.LabelFrame(self.content_frame, text="Story Direction")
-        frame.pack(fill=tk.BOTH, padx=10, pady=6)
-
-        self.story_direction_text = ScrolledText(
-            frame, height=5, wrap=tk.WORD, undo=True, autoseparators=True, maxundo=-1
-        )
-        self.story_direction_text.pack(fill=tk.BOTH, expand=True, padx=6, pady=(6, 2))
-        ttk.Label(
-            frame,
-            text="Guide the next events in short lines. One line = one direction.",
+            text="Guide the trajectory and tone of the story in short lines.",
         ).pack(anchor="w", padx=6, pady=(0, 6))
 
     def _build_scene_memory_section(self) -> None:
@@ -228,56 +211,64 @@ class RPGChatUI:
         )
         self.message_input_text.pack(fill=tk.BOTH, expand=True, padx=6, pady=6)
 
-        selector_row = ttk.Frame(frame)
-        selector_row.pack(fill=tk.X, padx=6, pady=(0, 6))
-
-        ttk.Label(selector_row, text="Speaker").pack(side=tk.LEFT)
-        speaker_combo = ttk.Combobox(
-            selector_row,
-            textvariable=self.speaker_var,
-            values=["Player", "Character"],
-            width=14,
-            state="readonly",
-        )
-        speaker_combo.pack(side=tk.LEFT, padx=8)
-
     def _build_controls_section(self) -> None:
         frame = ttk.LabelFrame(self.content_frame, text="Controls")
         frame.pack(fill=tk.X, padx=10, pady=6)
 
-        self.send_button = ttk.Button(frame, text="Send Message", command=self._on_send_message)
-        self.generate_button = ttk.Button(frame, text="Generate Response", command=self._on_generate_response)
-        self.enhance_button = ttk.Button(frame, text="Enhance Message", command=self._on_enhance_message)
-        self.redo_button = ttk.Button(frame, text="Redo Response", command=self._on_redo_response)
-        self.summary_button = ttk.Button(frame, text="Make Summary", command=self._on_make_summary)
+        chat_frame = ttk.LabelFrame(frame, text="Chat")
+        chat_frame.grid(row=0, column=0, sticky="ew", padx=6, pady=6)
+        persistence_frame = ttk.LabelFrame(frame, text="Persistence")
+        persistence_frame.grid(row=1, column=0, sticky="ew", padx=6, pady=(0, 6))
+
+        primary_chat_frame = ttk.LabelFrame(chat_frame, text="Primary")
+        primary_chat_frame.grid(row=0, column=0, sticky="ew", padx=6, pady=6)
+        utility_chat_frame = ttk.LabelFrame(chat_frame, text="Utilities")
+        utility_chat_frame.grid(row=1, column=0, sticky="ew", padx=6, pady=(0, 6))
+
+        self.send_button = ttk.Button(primary_chat_frame, text="Send Message", command=self._on_send_message)
+        self.redo_button = ttk.Button(primary_chat_frame, text="Redo Response", command=self._on_redo_response)
+        self.stop_button = ttk.Button(utility_chat_frame, text="Stop Generation", command=self._on_stop_generation)
         self.delete_last_button = ttk.Button(
-            frame,
+            utility_chat_frame,
             text="Delete Last Message",
             command=self._on_delete_last_message,
         )
-        self.save_button = ttk.Button(frame, text="Save Game", command=self._on_save_game)
-        self.load_button = ttk.Button(frame, text="Load Game", command=self._on_load_game)
-        self.stop_button = ttk.Button(frame, text="Stop Generation", command=self._on_stop_generation)
+        self.summary_button = ttk.Button(utility_chat_frame, text="Make Summary", command=self._on_make_summary)
+        self.save_button = ttk.Button(persistence_frame, text="Save Game", command=self._on_save_game)
+        self.load_button = ttk.Button(persistence_frame, text="Load Game", command=self._on_load_game)
 
-        buttons = [
+        primary_chat_buttons = [
             self.send_button,
-            self.generate_button,
-            self.enhance_button,
             self.redo_button,
-            self.summary_button,
+        ]
+        utility_chat_buttons = [
+            self.stop_button,
             self.delete_last_button,
+            self.summary_button,
+        ]
+        persistence_buttons = [
             self.save_button,
             self.load_button,
-            self.stop_button,
         ]
 
-        for idx, button in enumerate(buttons):
-            row = idx // 4
-            col = idx % 4
-            button.grid(row=row, column=col, padx=6, pady=6, sticky="ew")
+        for idx, button in enumerate(primary_chat_buttons):
+            button.grid(row=0, column=idx, padx=6, pady=6, sticky="ew")
 
-        for col in range(4):
-            frame.columnconfigure(col, weight=1)
+        for idx, button in enumerate(utility_chat_buttons):
+            button.grid(row=0, column=idx, padx=6, pady=6, sticky="ew")
+
+        for idx, button in enumerate(persistence_buttons):
+            button.grid(row=0, column=idx, padx=6, pady=6, sticky="ew")
+
+        for col in range(2):
+            primary_chat_frame.columnconfigure(col, weight=1)
+        for col in range(3):
+            utility_chat_frame.columnconfigure(col, weight=1)
+        chat_frame.columnconfigure(0, weight=1)
+        for col in range(2):
+            persistence_frame.columnconfigure(col, weight=1)
+
+        frame.columnconfigure(0, weight=1)
 
     def _build_token_monitor_section(self) -> None:
         frame = ttk.LabelFrame(self.content_frame, text="Token Monitor")
@@ -394,6 +385,7 @@ class RPGChatUI:
 
     def _bind_events(self) -> None:
         self.root.bind_all("<MouseWheel>", self._on_mousewheel)
+        self.message_input_text.bind("<KeyRelease>", self._on_input_changed, add="+")
         self._bind_clipboard_shortcuts()
 
     def _bind_clipboard_shortcuts(self) -> None:
@@ -490,6 +482,9 @@ class RPGChatUI:
     def _on_mousewheel(self, event: tk.Event) -> None:
         self.canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
 
+    def _on_input_changed(self, _event: tk.Event) -> None:
+        self.root.after(0, self.update_token_monitor)
+
     def _toggle_advanced_options(self) -> None:
         self.advanced_visible = not self.advanced_visible
         if self.advanced_visible:
@@ -503,8 +498,7 @@ class RPGChatUI:
         self.player_description_text.insert("1.0", self.state.player_description)
         self.character_description_text.insert("1.0", self.state.character_description)
         self.world_scenario_text.insert("1.0", self.state.world_scenario)
-        self.character_goal_text.insert("1.0", self.state.character_goal)
-        self.story_direction_text.insert("1.0", self.state.story_direction)
+        self.story_intent_text.insert("1.0", self.state.story_intent)
         self.scene_memory_text.insert("1.0", self.state.scene_memory)
 
     def _read_text(self, widget: ScrolledText) -> str:
@@ -517,8 +511,7 @@ class RPGChatUI:
         self.state.player_description = self._read_text(self.player_description_text)
         self.state.character_description = self._read_text(self.character_description_text)
         self.state.world_scenario = self._read_text(self.world_scenario_text)
-        self.state.character_goal = self._read_text(self.character_goal_text)
-        self.state.story_direction = self._read_text(self.story_direction_text)
+        self.state.story_intent = self._read_text(self.story_intent_text)
         self.state.scene_memory = self._read_text(self.scene_memory_text)
 
         temperature = self._safe_clamped_float(
@@ -609,43 +602,29 @@ class RPGChatUI:
             return
 
         self._push_fields_to_state()
-        speaker = self.speaker_var.get().strip() or "Player"
         message = self._read_text(self.message_input_text)
         if not message:
             return
 
-        self.controller.send_message(speaker, message)
-        self.message_input_text.delete("1.0", tk.END)
-        self.refresh_chat_history()
-        self.update_token_monitor()
-
-    def _on_generate_response(self) -> None:
-        if self._streaming:
+        turn = self.controller.send_player_message(message)
+        if not turn:
             return
 
-        self._push_fields_to_state()
-        speaker = self.speaker_var.get().strip() or "Character"
-        user_input = self._read_text(self.message_input_text)
         self.message_input_text.delete("1.0", tk.END)
+        self.refresh_chat_history()
 
         self._streaming = True
-        self._stream_speaker = speaker
+        self._stream_speaker = self.state.character_name.strip() or "Character"
         self._stream_buffer = ""
         self._set_generation_controls_enabled(False)
 
-        thread = threading.Thread(
-            target=self._stream_generation_worker,
-            args=(speaker, user_input),
-            daemon=True,
-        )
+        thread = threading.Thread(target=self._stream_generation_worker, daemon=True)
         thread.start()
         self.root.after(50, self._poll_stream_queue)
 
-    def _stream_generation_worker(self, speaker: str, user_input: str) -> None:
+    def _stream_generation_worker(self) -> None:
         try:
-            response_text = self.controller.generate_response(
-                speaker=speaker,
-                user_input=user_input,
+            response_text = self.controller.generate_character_response(
                 stream=True,
                 on_stream_token=lambda chunk: self._stream_queue.put(("chunk", chunk)),
             )
@@ -685,27 +664,6 @@ class RPGChatUI:
         if self._streaming or had_event:
             self.root.after(50, self._poll_stream_queue)
 
-    def _on_enhance_message(self) -> None:
-        if self._streaming:
-            return
-
-        self._push_fields_to_state()
-        text = self._read_text(self.message_input_text)
-        speaker = self.speaker_var.get().strip() or "Player"
-        if not text:
-            return
-
-        try:
-            enhanced = self.controller.enhance_message(speaker, text)
-        except LLMClientError as exc:
-            messagebox.showerror("Enhance Error", str(exc))
-            return
-
-        self._last_request_tokens = self.controller.estimate_text_tokens(enhanced)
-        self.message_input_text.delete("1.0", tk.END)
-        self.message_input_text.insert("1.0", enhanced)
-        self.update_token_monitor()
-
     def _on_redo_response(self) -> None:
         if self._streaming:
             return
@@ -713,9 +671,16 @@ class RPGChatUI:
         self._push_fields_to_state()
         if not self.state.chat_history:
             return
+        last_turn = self.state.chat_history[-1]
+        if not isinstance(last_turn, dict):
+            messagebox.showwarning("Redo Response", "Last turn must be a Character response.")
+            return
+        if str(last_turn.get("speaker", "")).strip().lower() != "character":
+            messagebox.showwarning("Redo Response", "Last turn must be a Character response.")
+            return
 
         self._streaming = True
-        self._stream_speaker = self.state.chat_history[-1][0]
+        self._stream_speaker = self.state.character_name.strip() or "Character"
         self._stream_buffer = ""
         self._set_generation_controls_enabled(False)
 
@@ -797,7 +762,13 @@ class RPGChatUI:
             messagebox.showerror("Load Error", str(exc))
             return
 
-        self.state = GameState.from_dict(payload)
+        try:
+            loaded_state = GameState.from_dict(payload)
+        except ValueError as exc:
+            messagebox.showerror("Load Error", str(exc))
+            return
+
+        self.state = loaded_state
         self.controller.state = self.state
         self._apply_state_to_widgets()
         self.refresh_chat_history()
@@ -816,11 +787,8 @@ class RPGChatUI:
         self.world_scenario_text.delete("1.0", tk.END)
         self.world_scenario_text.insert("1.0", self.state.world_scenario)
 
-        self.character_goal_text.delete("1.0", tk.END)
-        self.character_goal_text.insert("1.0", self.state.character_goal)
-
-        self.story_direction_text.delete("1.0", tk.END)
-        self.story_direction_text.insert("1.0", self.state.story_direction)
+        self.story_intent_text.delete("1.0", tk.END)
+        self.story_intent_text.insert("1.0", self.state.story_intent)
 
         self.scene_memory_text.delete("1.0", tk.END)
         self.scene_memory_text.insert("1.0", self.state.scene_memory)
@@ -841,8 +809,6 @@ class RPGChatUI:
     def _set_generation_controls_enabled(self, enabled: bool) -> None:
         state = tk.NORMAL if enabled else tk.DISABLED
         self.send_button.configure(state=state)
-        self.generate_button.configure(state=state)
-        self.enhance_button.configure(state=state)
         self.redo_button.configure(state=state)
         self.summary_button.configure(state=state)
         self.delete_last_button.configure(state=state)
@@ -866,7 +832,6 @@ class RPGChatUI:
         self._push_fields_to_state()
 
         used_tokens, max_tokens = self.controller.preview_context_tokens(
-            next_speaker=self.speaker_var.get().strip() or "Character",
             user_input=self._read_text(self.message_input_text),
         )
 
@@ -887,16 +852,14 @@ class RPGChatUI:
             signature = (
                 used_tokens,
                 max_tokens,
-                self.speaker_var.get().strip() or "Character",
                 len(self.state.chat_history),
             )
             if signature != self._last_prompt_debug_signature:
                 logger.info(
-                    "Prompt Debug - tokens: %s/%s, next_speaker=%s, chat_turns=%s",
+                    "Prompt Debug - tokens: %s/%s, chat_turns=%s",
                     used_tokens,
                     max_tokens,
                     signature[2],
-                    signature[3],
                 )
                 self._last_prompt_debug_signature = signature
         else:

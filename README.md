@@ -1,54 +1,71 @@
-# RPG Chat Client
+﻿# RPG Chat Client (v2.00)
 
-Desktop tkinter application for roleplay chat with local LLM models through LM Studio (OpenAI-compatible API).
+Desktop tkinter app for roleplay chat with local LLMs via LM Studio (OpenAI-compatible API).
 
-The project is optimized for small local models (~3B parameters) and short context windows (2048-4096 tokens).
+Runtime architecture:
+- `user` = Player
+- `assistant` = Character
+- After `Send Message`, Character response starts automatically (streaming)
 
-Primary tested LLM model: `Llama 3.2 3B Instruct`.
+## Model Compatibility
 
-The application is not designed or validated for reasoning-focused models (`thinking` models): they typically produce significantly longer responses and have less predictable token consumption, which can degrade UX and context budgeting behavior.
+- Reasoning / thinking models are not supported.
+- The app was tested with `Llama 3.2 3B Instruct`.
 
 ## Features
 
-- Roleplay chat with `Player` and `Character` turns
-- Context fields for persona, goals, world state, direction, and scene memory
-- Manual summarization of old chat into scene memory (`Make Summary`)
-- Token monitor for current context usage
-- Streaming generation with cancellation (`Stop Generation`)
-- Save/load full game state as JSON
-- Turn text normalization to avoid duplicated speaker prefixes
-- Clipboard shortcuts in editable text fields
+- Canonical dialogue flow: `player -> character`
+- Context fields:
+  - `Player Description`
+  - `Character Description`
+  - `World Description`
+  - `Story Intent`
+  - `Scene Memory`
+- Chat controls:
+  - `Send Message`, `Redo Response`
+  - `Stop Generation`, `Delete Last Message`, `Make Summary`
+- Save/Load game state as JSON (`version: 2`)
+- Strict load validation: only save schema v2 is accepted
+- Context token monitor
+- Streaming generation with cancellation
 
 ## Requirements
 
 - Python 3.10+
-- LM Studio running locally with a loaded chat model
-- LM Studio local server enabled at `http://127.0.0.1:1234`
+- LM Studio with a loaded chat model
+- LM Studio Local Server at `http://127.0.0.1:1234`
 - Python packages:
   - `requests`
-  - `tiktoken` (optional, fallback estimator is used if unavailable)
+  - `tiktoken` (optional)
 
 ## Quick Start
 
-1. Install dependencies:
-
 ```bash
 pip install requests tiktoken
-```
-
-2. Start LM Studio local server and load your model.
-3. Run the app from project root:
-
-```bash
 python src/main.py
 ```
 
-## How It Works
+## How to Use
 
-1. Fill in names and context fields (`Character Description`, `World Scenario`, `Story Direction`, etc.).
-2. Choose speaker in `Message Input` and send or generate turns.
-3. Use `Make Summary` to compress older messages into `Scene Memory`.
-4. Use `Save Game` / `Load Game` to persist and restore sessions.
+1. Fill names and context (especially `World Description` and `Story Intent`).
+2. Enter a player message in `Message Input`.
+3. Click `Send Message`.
+4. The app appends Player turn and immediately generates Character turn.
+5. Use `Redo Response` to regenerate the latest Character response.
+6. Use `Make Summary` to compress old turns into `Scene Memory`.
+
+## Save Format
+
+Only `version: 2` is supported.
+
+Key fields:
+- `player_name`, `character_name`
+- `player_description`, `character_description`
+- `world_scenario` (shown in UI as `World Description`)
+- `story_intent`
+- `scene_memory`
+- `chat_history`: array of `{ "speaker": "player|character", "text": "..." }`
+- `settings`
 
 ## Keyboard Shortcuts (Editable Fields)
 
@@ -64,15 +81,7 @@ python src/main.py
 ```text
 rpg_client_project/
   CHANGELOG.md
-  docs/
-    architecture.md
-    coding_rules.md
-    context_builder_design.md
-    implementation_spec.md
-    llm_generation_prompt.md
-    product_spec.md
-    prompts_spec.md
-    ui_layout_spec.md
+  README.md
   src/
     main.py
     ui.py
@@ -87,24 +96,6 @@ rpg_client_project/
 
 ## Troubleshooting
 
-- `LM Studio: Disconnected`: confirm LM Studio server is running and reachable at `http://127.0.0.1:1234`.
-- Generation errors: verify a model is loaded in LM Studio and supports chat completions.
-- High token usage: shorten context fields and summarize old chat.
-
-## Documentation
-
-Detailed design and implementation specs are in `docs/`:
-
-- `product_spec.md`
-- `architecture.md`
-- `implementation_spec.md`
-- `prompts_spec.md`
-- `context_builder_design.md`
-- `ui_layout_spec.md`
-- `coding_rules.md`
-
-## Change Tracking
-
-Use `CHANGELOG.md` for incremental project updates and behavior changes.
-
-As a default workflow, add a changelog entry for new changes instead of updating spec docs on every small iteration.
+- `LM Studio: Disconnected`: check that LM Studio server is running and reachable at `http://127.0.0.1:1234`.
+- `Load Error`: file does not match strict schema `version: 2`.
+- High context usage: shorten context fields and use `Make Summary`.

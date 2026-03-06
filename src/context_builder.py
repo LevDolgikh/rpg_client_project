@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 from models import GameState
 from prompts import CONTEXT_TEMPLATE, SYSTEM_PROMPT
@@ -15,47 +15,42 @@ class ContextBuilder:
     def build_messages(
         self,
         state: GameState,
-        next_speaker: str,
         user_input: str = "",
         response_reserve_tokens: int = 150,
     ) -> list[dict[str, str]]:
         """
-        Assemble messages in the required order:
+        Assemble messages in strict order:
         1) system prompt
         2) context block
         3) recent chat history
-        4) next speaker prefix
+        4) current player input (optional)
         """
-        system_message = {
-            "role": "system",
-            "content": self._build_system_prompt(state, next_speaker),
-        }
-
-        context_message = {
-            "role": "user",
-            "content": self.build_context_block(state),
-        }
+        messages: list[dict[str, str]] = [
+            {
+                "role": "system",
+                "content": self._build_system_prompt(state),
+            },
+            {
+                "role": "user",
+                "content": self.build_context_block(state),
+            },
+        ]
 
         history = self.trim_history(
             state=state,
-            next_speaker=next_speaker,
             user_input=user_input,
             response_reserve_tokens=response_reserve_tokens,
         )
-        history_messages = self.build_chat_history(history)
+        messages.extend(self.build_chat_history(history))
 
-        messages: list[dict[str, str]] = [system_message, context_message]
-        messages.extend(history_messages)
+        clean_input = GameState._normalize_turn_text(
+            text=user_input,
+            player_name=state.player_name,
+            character_name=state.character_name,
+        )
+        if clean_input:
+            messages.append({"role": "user", "content": clean_input})
 
-        if user_input.strip():
-            messages.append(
-                {
-                    "role": self._speaker_to_role(next_speaker),
-                    "content": f"{next_speaker}: {user_input.strip()}",
-                }
-            )
-
-        messages.append({"role": "user", "content": f"{next_speaker}:"})
         return messages
 
     def build_context_block(self, state: GameState) -> str:
@@ -63,26 +58,32 @@ class ContextBuilder:
         return CONTEXT_TEMPLATE.format(
             character_description=state.character_description.strip(),
             player_description=state.player_description.strip(),
-            character_goal=state.character_goal.strip(),
+            story_intent=state.story_intent.strip(),
             world_scenario=state.world_scenario.strip(),
-            story_direction=state.story_direction.strip(),
             scene_memory=state.scene_memory.strip(),
         )
 
-    def build_chat_history(self, chat_history: list[tuple[str, str]]) -> list[dict[str, str]]:
-        """Convert internal chat turns into OpenAI-compatible role messages."""
+    def build_chat_history(self, chat_history: list[dict[str, str]]) -> list[dict[str, str]]:
+        """Convert canonical chat turns into OpenAI-compatible role messages."""
         messages: list[dict[str, str]] = []
 
-        for speaker, text in chat_history:
-            speaker_text = str(speaker).strip()
-            message_text = str(text).strip()
-            if not speaker_text or not message_text:
+        for turn in chat_history:
+            if not isinstance(turn, dict):
+                continue
+
+            speaker = GameState._normalize_speaker(turn.get("speaker", ""))
+            message_text = GameState._normalize_turn_text(
+                text=turn.get("text", ""),
+                player_name="",
+                character_name="",
+            )
+            if not speaker or not message_text:
                 continue
 
             messages.append(
                 {
-                    "role": self._speaker_to_role(speaker_text),
-                    "content": f"{speaker_text}: {message_text}",
+                    "role": self._speaker_to_role(speaker),
+                    "content": message_text,
                 }
             )
 
@@ -91,19 +92,10 @@ class ContextBuilder:
     def trim_history(
         self,
         state: GameState,
-        next_speaker: str,
         user_input: str = "",
         response_reserve_tokens: int = 150,
-    ) -> list[tuple[str, str]]:
-        """
-        Trim oldest chat messages first until token budget fits.
-
-        Preservation priority (from docs):
-        - system prompt
-        - context block
-        - scene memory (inside context block)
-        - recent chat history
-        """
+    ) -> list[dict[str, str]]:
+        """Trim oldest chat messages first until token budget fits."""
         history = list(state.chat_history)
         if self.max_chat_messages > 0 and len(history) > self.max_chat_messages:
             history = history[-self.max_chat_messages :]
@@ -112,7 +104,6 @@ class ContextBuilder:
             candidate_messages = self._build_candidate_messages(
                 state=state,
                 history=history,
-                next_speaker=next_speaker,
                 user_input=user_input,
             )
             token_count = self.token_manager.count_tokens(messages=candidate_messages)
@@ -129,14 +120,13 @@ class ContextBuilder:
     def _build_candidate_messages(
         self,
         state: GameState,
-        history: list[tuple[str, str]],
-        next_speaker: str,
+        history: list[dict[str, str]],
         user_input: str,
     ) -> list[dict[str, str]]:
         messages: list[dict[str, str]] = [
             {
                 "role": "system",
-                "content": self._build_system_prompt(state, next_speaker),
+                "content": self._build_system_prompt(state),
             },
             {
                 "role": "user",
@@ -145,28 +135,23 @@ class ContextBuilder:
         ]
         messages.extend(self.build_chat_history(history))
 
-        if user_input.strip():
-            messages.append(
-                {
-                    "role": self._speaker_to_role(next_speaker),
-                    "content": f"{next_speaker}: {user_input.strip()}",
-                }
-            )
+        clean_input = GameState._normalize_turn_text(
+            text=user_input,
+            player_name=state.player_name,
+            character_name=state.character_name,
+        )
+        if clean_input:
+            messages.append({"role": "user", "content": clean_input})
 
-        messages.append({"role": "user", "content": f"{next_speaker}:"})
         return messages
 
     def _speaker_to_role(self, speaker: str) -> str:
-        normalized = speaker.strip().lower()
-        if normalized == "character":
+        if speaker == "player":
+            return "user"
+        if speaker == "character":
             return "assistant"
-        return "user"
+        raise ValueError(f"Unsupported speaker value: {speaker}")
 
-    def _build_system_prompt(self, state: GameState, next_speaker: str) -> str:
-        normalized = str(next_speaker).strip().lower()
-        if normalized == "player":
-            active_name = state.player_name.strip() or "Player"
-        else:
-            active_name = state.character_name.strip() or "Character"
+    def _build_system_prompt(self, state: GameState) -> str:
+        active_name = state.character_name.strip() or "Character"
         return SYSTEM_PROMPT.format(character_name=active_name)
-

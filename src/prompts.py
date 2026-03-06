@@ -2,7 +2,7 @@ COMMON_ROLEPLAY_RULES = """Write in third person past tense.
 
 Write exactly one paragraph.
 
-Keep responses moderate in length.
+Keep responses short in length.
 
 Use "quotes" for dialogue.
 
@@ -32,14 +32,11 @@ Character Persona:
 Player Persona:
 {player_description}
 
-Character Goal:
-{character_goal}
+Story Intent:
+{story_intent}
 
-World Scenario:
+World Description:
 {world_scenario}
-
-Story Direction:
-{story_direction}
 
 Scene Memory:
 {scene_memory}"""
@@ -65,31 +62,3 @@ Chat history:
 
 
 Summary:"""
-
-
-ENHANCE_PROMPT = f"""Rewrite the following roleplay message to improve atmosphere and description.
-
-Keep the meaning the same.
-
-Respect the current scene context and recent dialogue.
-
-Do not introduce contradictions with established facts.
-
-Rules:
-
-{COMMON_ROLEPLAY_RULES}
-
-Speaker:
-{{speaker}}
-
-Context:
-{{context_block}}
-
-Recent chat history:
-{{chat_history}}
-
-Original message:
-{{user_message}}
-
-
-Enhanced version:"""

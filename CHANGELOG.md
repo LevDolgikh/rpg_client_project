@@ -2,9 +2,22 @@
 
 All notable project changes are recorded here.
 
-This file follows a simple Keep a Changelog style with versioned releases.
+## [2.00] - 2026-03-06
 
-## [Unreleased]
+### Changed
+- Migrated the app to the role-invariant architecture: `player -> character` with fixed role mapping (`user`/`assistant`).
+- Removed manual speaker routing and switched chat flow to automatic character generation immediately after `Send Message`.
+- Reworked context model: merged legacy intent fields into a single `story_intent` and clarified world context as `World Description` in UI.
+- Switched chat history to canonical turn objects (`{speaker, text}`) across runtime, prompt building, summaries, and persistence.
+- Tightened save/load contract to strict schema `version: 2` with explicit validation errors.
+
+### Removed
+- Removed `Enhance Message` feature.
+- Removed legacy role-switching controls (`Speaker`, `Generate Response`).
+- Removed migration documentation folder `docs/` after completion.
+
+### Notes
+- Migration image: project moved from a manual gearbox to an automatic transmission - fewer levers, steadier motion.
 
 ## [1.02] - 2026-03-06
 

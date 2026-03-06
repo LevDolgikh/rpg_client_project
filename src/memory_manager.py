@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 from typing import Protocol
 
@@ -17,12 +17,19 @@ class MemoryManager:
     def __init__(self, llm_client: SupportsGenerate) -> None:
         self.llm_client = llm_client
 
-    def create_summary(self, chat_history: list[tuple[str, str]]) -> str:
+    def create_summary(
+        self,
+        chat_history: list[dict[str, str]],
+        player_name: str = "Player",
+        character_name: str = "Character",
+    ) -> str:
         """Create a concise scene summary from chat history using the LLM."""
         if not chat_history:
             return ""
 
-        prompt = SUMMARY_PROMPT.format(chat_history=self._format_chat_history(chat_history))
+        prompt = SUMMARY_PROMPT.format(
+            chat_history=self._format_chat_history(chat_history, player_name, character_name)
+        )
         messages = [{"role": "user", "content": prompt}]
 
         summary = self.llm_client.generate(messages)
@@ -60,7 +67,11 @@ class MemoryManager:
 
         split_index = min(messages_to_summarize, len(state.chat_history))
         old_messages = state.chat_history[:split_index]
-        summary = self.create_summary(old_messages)
+        summary = self.create_summary(
+            old_messages,
+            player_name=state.player_name,
+            character_name=state.character_name,
+        )
 
         if not summary:
             return ""
@@ -69,12 +80,27 @@ class MemoryManager:
         state.chat_history = state.chat_history[split_index:]
         return summary
 
-    def _format_chat_history(self, chat_history: list[tuple[str, str]]) -> str:
+    def _format_chat_history(
+        self,
+        chat_history: list[dict[str, str]],
+        player_name: str,
+        character_name: str,
+    ) -> str:
         lines: list[str] = []
-        for speaker, text in chat_history:
-            speaker_text = str(speaker).strip()
-            message_text = str(text).strip()
-            if not speaker_text or not message_text:
+        for turn in chat_history:
+            if not isinstance(turn, dict):
                 continue
-            lines.append(f"{speaker_text}: {message_text}")
+            speaker = GameState._normalize_speaker(turn.get("speaker", ""))
+            text = str(turn.get("text", "")).strip()
+            if not speaker or not text:
+                continue
+            display_name = self._display_name_for_speaker(speaker, player_name, character_name)
+            lines.append(f"{display_name}: {text}")
         return "\n".join(lines)
+
+    def _display_name_for_speaker(self, speaker: str, player_name: str, character_name: str) -> str:
+        if speaker == "player":
+            return player_name.strip() or "Player"
+        if speaker == "character":
+            return character_name.strip() or "Character"
+        return speaker
