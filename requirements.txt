@@ -1,0 +1,3 @@
+requests>=2.31.0
+# Optional: better token counting accuracy
+# tiktoken>=0.7.0

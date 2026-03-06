@@ -32,6 +32,11 @@ class RPGChatUI:
         self.player_name_var = StringVar(value=self.state.player_name)
         self.character_name_var = StringVar(value=self.state.character_name)
         self.server_status_var = StringVar(value="LM Studio: Unknown")
+        initial_base_url = self.controller.set_llm_base_url(
+            str(self.state.settings.get("llm_base_url", self.controller.get_default_llm_base_url()))
+        )
+        self.state.settings["llm_base_url"] = initial_base_url
+        self.llm_base_url_var = StringVar(value=initial_base_url)
         self.llm_status_var = StringVar(value="LLM: Idle")
         initial_context_limit = self._safe_int(
             str(self.state.settings.get("context_limit", self.controller.get_memory_limit())),
@@ -74,7 +79,7 @@ class RPGChatUI:
         self.update_token_monitor()
 
     def _configure_root(self) -> None:
-        self.root.title("RPG Chat Client v2.00")
+        self.root.title("RPG Chat Client v2.01")
         self.root.geometry("960x900")
         self.root.minsize(820, 700)
 
@@ -118,9 +123,17 @@ class RPGChatUI:
             row=0, column=1, padx=6, pady=6
         )
 
-        ttk.Label(frame, text="Memory Limit:").grid(row=0, column=2, sticky="e", padx=6, pady=6)
-        ttk.Entry(frame, textvariable=self.memory_limit_var, width=10).grid(
+        ttk.Label(frame, text="LM Studio URL:").grid(row=0, column=2, sticky="e", padx=6, pady=6)
+        ttk.Entry(frame, textvariable=self.llm_base_url_var, width=26).grid(
             row=0, column=3, sticky="w", padx=6, pady=6
+        )
+        ttk.Button(frame, text="Reset Default URL", command=self._on_reset_default_url).grid(
+            row=0, column=4, padx=6, pady=6
+        )
+
+        ttk.Label(frame, text="Memory Limit:").grid(row=1, column=2, sticky="e", padx=6, pady=(0, 6))
+        ttk.Entry(frame, textvariable=self.memory_limit_var, width=10).grid(
+            row=1, column=3, sticky="w", padx=6, pady=(0, 6)
         )
 
         frame.columnconfigure(0, weight=1)
@@ -565,6 +578,10 @@ class RPGChatUI:
             prompt_debug=bool(self.prompt_debug_var.get()),
         )
 
+        normalized_base_url = self.controller.set_llm_base_url(self.llm_base_url_var.get())
+        self.llm_base_url_var.set(normalized_base_url)
+        self.state.settings["llm_base_url"] = normalized_base_url
+
         new_limit = self._safe_int(
             self.memory_limit_var.get(),
             self.controller.get_memory_limit(),
@@ -600,6 +617,13 @@ class RPGChatUI:
         return max(1, parsed)
 
     def _on_reconnect(self) -> None:
+        self._push_fields_to_state()
+        self._refresh_server_status()
+
+    def _on_reset_default_url(self) -> None:
+        default_url = self.controller.get_default_llm_base_url()
+        self.llm_base_url_var.set(default_url)
+        self._push_fields_to_state()
         self._refresh_server_status()
 
     def _refresh_server_status(self) -> None:
@@ -843,6 +867,11 @@ class RPGChatUI:
         self.prompt_debug_var.set(
             bool(self.state.settings.get("prompt_debug", DEFAULT_SETTINGS["prompt_debug"]))
         )
+        loaded_base_url = self.controller.set_llm_base_url(
+            str(self.state.settings.get("llm_base_url", self.controller.get_default_llm_base_url()))
+        )
+        self.state.settings["llm_base_url"] = loaded_base_url
+        self.llm_base_url_var.set(loaded_base_url)
         loaded_context_limit = self._safe_int(
             str(self.state.settings.get("context_limit", self.controller.get_memory_limit())),
             self.controller.get_memory_limit(),

@@ -16,6 +16,9 @@ All notable project changes are recorded here.
 - Changed summary behavior in `src/chat_controller.py`: `Make Summary` now appends to existing `Scene Memory` instead of replacing it.
 - Added visible LLM activity indicator in `src/ui.py` (`LLM: ...` status + indeterminate progress bar) during response generation, redo, and summary.
 - Moved summary execution in `src/ui.py` to a background worker with queue polling, so the UI no longer appears frozen while summary is being generated.
+- Added configurable LM Studio connection URL in `src/ui.py` (`LM Studio URL`) with `Reset Default URL`, and wired persistence/apply flow through `src/models.py`, `src/chat_controller.py`, and `src/llm_client.py`.
+- Refreshed `README.md` for release accuracy (new URL workflow, summary behavior, activity indicator, updated quick start and structure).
+- Added `LICENSE` (MIT) and `requirements.txt` for GitHub release packaging.
 
 ## [2.00] - 2026-03-06
 

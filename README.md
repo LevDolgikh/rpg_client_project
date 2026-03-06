@@ -1,16 +1,19 @@
-﻿# RPG Chat Client (v2.01)
+# RPG Chat Client (v2.01)
 
-Desktop tkinter app for roleplay chat with local LLMs via LM Studio (OpenAI-compatible API).
+Desktop `tkinter` app for roleplay chat with local LLMs via LM Studio (OpenAI-compatible API).
+
+This is a hobby project for personal use and it is not deeply tested.
+Quality and stability depend heavily on the selected language model and prompt behavior.
 
 Runtime architecture:
 - `user` = Player
 - `assistant` = Character
-- After `Send Message`, Character response starts automatically (streaming)
+- After `Send Message`, Character response starts automatically in streaming mode
 
 ## Model Compatibility
 
-- Reasoning / thinking models are not supported.
-- The app was tested with `Llama 3.2 3B Instruct`.
+- Reasoning/thinking models are not supported.
+- Tested with `Llama 3.2 3B Instruct`.
 
 ## Features
 
@@ -24,35 +27,38 @@ Runtime architecture:
 - Chat controls:
   - `Send Message`, `Redo Response`
   - `Stop Generation`, `Delete Last Message`, `Make Summary`
-- Save/Load game state as JSON (`version: 2`)
-- Strict load validation: only save schema v2 is accepted
-- Context token monitor
 - Streaming generation with cancellation
+- LLM activity indicator in `Controls` (`LLM: ...` + progress bar)
+- Configurable `LM Studio URL` in UI + `Reset Default URL`
+- Context token monitor
+- Save/Load game state as JSON (`version: 2`)
+- Strict load validation for schema `version: 2`
 
 ## Requirements
 
 - Python 3.10+
 - LM Studio with a loaded chat model
-- LM Studio Local Server at `http://127.0.0.1:1234`
 - Python packages:
   - `requests`
-  - `tiktoken` (optional)
+  - `tiktoken` (optional, improves token counting accuracy)
 
 ## Quick Start
 
 ```bash
-pip install requests tiktoken
+pip install -r requirements.txt
 python src/main.py
 ```
+
+Default LM Studio URL is `http://127.0.0.1:1234` and can be changed in `Server Status`.
 
 ## How to Use
 
 1. Fill names and context (especially `World Description` and `Story Intent`).
-2. Enter a player message in `Message Input`.
-3. Click `Send Message`.
-4. The app appends Player turn and immediately generates Character turn.
+2. (Optional) Set `LM Studio URL` in `Server Status`.
+3. Enter a player message in `Message Input`.
+4. Click `Send Message`.
 5. Use `Redo Response` to regenerate the latest Character response.
-6. Use `Make Summary` to compress old turns into `Scene Memory`.
+6. Use `Make Summary` to summarize older chat turns and append the result to `Scene Memory`.
 
 ## Save Format
 
@@ -65,7 +71,7 @@ Key fields:
 - `story_intent`
 - `scene_memory`
 - `chat_history`: array of `{ "speaker": "player|character", "text": "..." }`
-- `settings`
+- `settings` (includes generation settings, `context_limit`, `llm_base_url`)
 
 ## Keyboard Shortcuts (Editable Fields)
 
@@ -81,7 +87,9 @@ Key fields:
 ```text
 rpg_client_project/
   CHANGELOG.md
+  LICENSE
   README.md
+  requirements.txt
   src/
     main.py
     ui.py
@@ -96,6 +104,6 @@ rpg_client_project/
 
 ## Troubleshooting
 
-- `LM Studio: Disconnected`: check that LM Studio server is running and reachable at `http://127.0.0.1:1234`.
-- `Load Error`: file does not match strict schema `version: 2`.
+- `LM Studio: Disconnected`: check that LM Studio server is running and that `LM Studio URL` is correct.
+- `Load Error`: save file does not match strict schema `version: 2`.
 - High context usage: shorten context fields and use `Make Summary`.

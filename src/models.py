@@ -10,6 +10,7 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "frequency_penalty": 0.2,
     "max_tokens": 120,
     "context_limit": 4096,
+    "llm_base_url": "http://127.0.0.1:1234",
     "prompt_debug": False,
 }
 

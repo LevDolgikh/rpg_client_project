@@ -5,7 +5,7 @@ import re
 from typing import Callable
 
 from context_builder import ContextBuilder
-from llm_client import LLMClient, LLMClientError
+from llm_client import DEFAULT_BASE_URL, LLMClient, LLMClientError
 from memory_manager import MemoryManager
 from models import DEFAULT_SETTINGS, GameState
 
@@ -149,6 +149,19 @@ class ChatController:
 
     def is_server_connected(self) -> bool:
         return self.llm_client.is_available()
+
+    def get_llm_base_url(self) -> str:
+        return self.llm_client.base_url
+
+    def get_default_llm_base_url(self) -> str:
+        return DEFAULT_BASE_URL
+
+    def set_llm_base_url(self, base_url: str) -> str:
+        normalized = str(base_url).strip().rstrip("/")
+        if not normalized:
+            normalized = DEFAULT_BASE_URL
+        self.llm_client.set_base_url(normalized)
+        return normalized
 
     def get_memory_limit(self) -> int:
         return self.context_builder.token_manager.max_tokens

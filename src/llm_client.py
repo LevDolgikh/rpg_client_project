@@ -8,6 +8,8 @@ import requests
 
 logger = logging.getLogger(__name__)
 
+DEFAULT_BASE_URL = "http://127.0.0.1:1234"
+
 
 class LLMClientError(Exception):
     """Raised when LM Studio request/response handling fails."""
@@ -18,7 +20,7 @@ class LLMClient:
 
     def __init__(
         self,
-        base_url: str = "http://127.0.0.1:1234",
+        base_url: str = DEFAULT_BASE_URL,
         model: str = "local-model",
         timeout: int = 60,
     ) -> None:
@@ -35,6 +37,9 @@ class LLMClient:
     def cancel_generation(self) -> None:
         """Signal active streaming generation to stop."""
         self._cancel_requested = True
+
+    def set_base_url(self, base_url: str) -> None:
+        self.base_url = str(base_url).strip().rstrip("/")
 
     def is_available(self) -> bool:
         """Check whether LM Studio API is reachable."""
