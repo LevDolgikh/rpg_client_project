@@ -59,9 +59,6 @@ class RPGChatUI:
                 self.state.settings.get("frequency_penalty", DEFAULT_SETTINGS["frequency_penalty"])
             )
         )
-        self.max_tokens_var = StringVar(
-            value=str(self.state.settings.get("max_tokens", DEFAULT_SETTINGS["max_tokens"]))
-        )
         self.prompt_debug_var = BooleanVar(
             value=bool(self.state.settings.get("prompt_debug", DEFAULT_SETTINGS["prompt_debug"]))
         )
@@ -352,33 +349,26 @@ class RPGChatUI:
             4,
             "Allowed 0.0-0.5, default 0.2.",
         )
-        self._labeled_entry(
-            self.advanced_frame,
-            "Max Tokens",
-            self.max_tokens_var,
-            5,
-            "Default 120. Keeps replies around moderate length.",
-        )
 
         ttk.Button(
             self.advanced_frame,
             text="Reset Recommended",
             command=self._reset_advanced_defaults,
-        ).grid(row=6, column=0, sticky="w", padx=6, pady=6)
+        ).grid(row=5, column=0, sticky="w", padx=6, pady=6)
 
         ttk.Checkbutton(
             self.advanced_frame,
             text="Prompt Debug Mode",
             variable=self.prompt_debug_var,
-        ).grid(row=7, column=0, columnspan=2, sticky="w", padx=6, pady=(4, 2))
+        ).grid(row=6, column=0, columnspan=2, sticky="w", padx=6, pady=(4, 2))
         ttk.Label(
             self.advanced_frame,
             text="When enabled: logs context token usage and prompt metadata to app console.",
-        ).grid(row=8, column=0, columnspan=3, sticky="w", padx=6, pady=(0, 6))
+        ).grid(row=7, column=0, columnspan=3, sticky="w", padx=6, pady=(0, 6))
         ttk.Label(
             self.advanced_frame,
             text="Values above ranges are auto-limited to avoid unstable roleplay.",
-        ).grid(row=9, column=0, columnspan=3, sticky="w", padx=6, pady=(0, 6))
+        ).grid(row=8, column=0, columnspan=3, sticky="w", padx=6, pady=(0, 6))
 
         self._load_state_into_fields()
 
@@ -405,7 +395,6 @@ class RPGChatUI:
         self.top_p_var.set(str(DEFAULT_SETTINGS["top_p"]))
         self.presence_penalty_var.set(str(DEFAULT_SETTINGS["presence_penalty"]))
         self.frequency_penalty_var.set(str(DEFAULT_SETTINGS["frequency_penalty"]))
-        self.max_tokens_var.set(str(DEFAULT_SETTINGS["max_tokens"]))
         self.prompt_debug_var.set(bool(DEFAULT_SETTINGS["prompt_debug"]))
         self.update_token_monitor()
 
@@ -574,7 +563,6 @@ class RPGChatUI:
             top_p=top_p,
             presence_penalty=presence_penalty,
             frequency_penalty=frequency_penalty,
-            max_tokens=self._safe_int(self.max_tokens_var.get(), int(DEFAULT_SETTINGS["max_tokens"])),
             prompt_debug=bool(self.prompt_debug_var.get()),
         )
 
@@ -863,7 +851,6 @@ class RPGChatUI:
         self.frequency_penalty_var.set(
             str(self.state.settings.get("frequency_penalty", DEFAULT_SETTINGS["frequency_penalty"]))
         )
-        self.max_tokens_var.set(str(self.state.settings.get("max_tokens", DEFAULT_SETTINGS["max_tokens"])))
         self.prompt_debug_var.set(
             bool(self.state.settings.get("prompt_debug", DEFAULT_SETTINGS["prompt_debug"]))
         )

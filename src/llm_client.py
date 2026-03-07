@@ -56,7 +56,6 @@ class LLMClient:
         top_p: float = 1.0,
         presence_penalty: float = 0.0,
         frequency_penalty: float = 0.0,
-        max_tokens: int | None = None,
     ) -> str:
         """Generate a full response (non-streaming)."""
         payload = {
@@ -68,8 +67,6 @@ class LLMClient:
             "frequency_penalty": frequency_penalty,
             "stream": False,
         }
-        if max_tokens is not None:
-            payload["max_tokens"] = max_tokens
 
         logger.info("Sending non-stream request to LM Studio.")
         try:
@@ -97,7 +94,6 @@ class LLMClient:
         top_p: float = 1.0,
         presence_penalty: float = 0.0,
         frequency_penalty: float = 0.0,
-        max_tokens: int | None = None,
     ) -> Iterator[str]:
         """
         Stream response chunks from LM Studio.
@@ -115,8 +111,6 @@ class LLMClient:
             "frequency_penalty": frequency_penalty,
             "stream": True,
         }
-        if max_tokens is not None:
-            payload["max_tokens"] = max_tokens
 
         logger.info("Sending stream request to LM Studio.")
         try:

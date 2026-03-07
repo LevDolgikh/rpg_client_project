@@ -192,7 +192,6 @@ class ChatController:
         top_p: float,
         presence_penalty: float,
         frequency_penalty: float,
-        max_tokens: int,
         prompt_debug: bool,
     ) -> None:
         self.state.settings["temperature"] = self._clamp_float(temperature, *TEMPERATURE_RANGE)
@@ -205,7 +204,6 @@ class ChatController:
             frequency_penalty,
             *FREQUENCY_PENALTY_RANGE,
         )
-        self.state.settings["max_tokens"] = max(1, int(max_tokens))
         self.state.settings["prompt_debug"] = bool(prompt_debug)
 
     def _generation_params(self) -> dict[str, float | int]:
@@ -218,19 +216,7 @@ class ChatController:
             "frequency_penalty": float(
                 self.state.settings.get("frequency_penalty", DEFAULT_SETTINGS["frequency_penalty"])
             ),
-            "max_tokens": self._get_max_tokens(),
         }
-
-    def _get_max_tokens(self) -> int:
-        value = self.state.settings.get("max_tokens", DEFAULT_SETTINGS["max_tokens"])
-        try:
-            max_tokens = int(value)
-        except (TypeError, ValueError):
-            return int(DEFAULT_SETTINGS["max_tokens"])
-        return max(1, max_tokens)
-
-    def get_max_tokens(self) -> int:
-        return self._get_max_tokens()
 
     def _clamp_float(self, value: float, min_value: float, max_value: float) -> float:
         parsed = float(value)

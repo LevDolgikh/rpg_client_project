@@ -14,6 +14,8 @@ Do not write actions or dialogue for other characters.
 
 Stay in character.
 
+Lead events forward.
+
 Do not prepend speaker labels like "Character:" or "Player:"."""
 
 
