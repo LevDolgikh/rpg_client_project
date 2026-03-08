@@ -31,7 +31,15 @@ class RPGChatUI:
 
         self.player_name_var = StringVar(value=self.state.player_name)
         self.character_name_var = StringVar(value=self.state.character_name)
-        self.server_status_var = StringVar(value="LM Studio: Unknown")
+        # connection/provider state
+        self.server_status_var = StringVar(value="LLM: Unknown")
+        self.connection_type_var = StringVar(
+            value=str(self.state.settings.get("provider", "local"))
+        )
+        self.api_key_var = StringVar(value=str(self.state.settings.get("api_key", "")))
+        self.model_var = StringVar(value=str(self.state.settings.get("model", "")))
+        self.model_options: list[str] = []
+
         initial_base_url = self.controller.set_llm_base_url(
             str(self.state.settings.get("llm_base_url", self.controller.get_default_llm_base_url()))
         )
@@ -71,6 +79,9 @@ class RPGChatUI:
         self._configure_root()
         self._build_layout()
         self._bind_events()
+        self._load_state_into_fields()
+        # ensure controller provider matches saved settings
+        self._apply_provider_settings_from_state()
         self._refresh_server_status()
         self.refresh_chat_history()
         self.update_token_monitor()
@@ -115,25 +126,66 @@ class RPGChatUI:
         frame = ttk.LabelFrame(self.content_frame, text="Server Status")
         frame.pack(fill=tk.X, padx=10, pady=6)
 
-        ttk.Label(frame, textvariable=self.server_status_var).grid(row=0, column=0, sticky="w", padx=6, pady=6)
-        ttk.Button(frame, text="Reconnect", command=self._on_reconnect).grid(
-            row=0, column=1, padx=6, pady=6
+        # status message
+        ttk.Label(frame, textvariable=self.server_status_var).grid(
+            row=0, column=0, columnspan=4, sticky="w", padx=6, pady=6
         )
 
-        ttk.Label(frame, text="LM Studio URL:").grid(row=0, column=2, sticky="e", padx=6, pady=6)
+        # connection type selector
+        ttk.Label(frame, text="Connection Type:").grid(
+            row=1, column=0, sticky="e", padx=6, pady=4
+        )
+        self.connection_menu = ttk.OptionMenu(
+            frame,
+            self.connection_type_var,
+            self.connection_type_var.get(),
+            "local",
+            "openai",
+            "ollama_cloud",
+            command=lambda _v: self._on_connection_type_change(),
+        )
+        self.connection_menu.grid(row=1, column=1, sticky="w", padx=6, pady=4)
+
+        # server url / base URL
+        ttk.Label(frame, text="Server URL:").grid(
+            row=1, column=2, sticky="e", padx=6, pady=4
+        )
         ttk.Entry(frame, textvariable=self.llm_base_url_var, width=26).grid(
-            row=0, column=3, sticky="w", padx=6, pady=6
+            row=1, column=3, sticky="w", padx=6, pady=4
         )
+
+        # api key
+        ttk.Label(frame, text="API Key:").grid(
+            row=2, column=0, sticky="e", padx=6, pady=4
+        )
+        ttk.Entry(frame, textvariable=self.api_key_var, width=26, show="*").grid(
+            row=2, column=1, columnspan=3, sticky="w", padx=6, pady=4
+        )
+
+        # model selector
+        ttk.Label(frame, text="Model:").grid(
+            row=3, column=0, sticky="e", padx=6, pady=4
+        )
+        self.model_menu = ttk.OptionMenu(frame, self.model_var, self.model_var.get())
+        self.model_menu.grid(row=3, column=1, columnspan=3, sticky="w", padx=6, pady=4)
+        self.model_menu.configure(state="disabled")
+
+        # connect/disconnect buttons
+        ttk.Button(frame, text="Connect", command=self._on_connect).grid(
+            row=4, column=1, padx=6, pady=6
+        )
+        ttk.Button(frame, text="Disconnect", command=self._on_disconnect).grid(
+            row=4, column=2, padx=6, pady=6
+        )
+
+        # reset URL button remains for convenience
         ttk.Button(frame, text="Reset Default URL", command=self._on_reset_default_url).grid(
-            row=0, column=4, padx=6, pady=6
+            row=4, column=3, padx=6, pady=6
         )
 
-        ttk.Label(frame, text="Memory Limit:").grid(row=1, column=2, sticky="e", padx=6, pady=(0, 6))
-        ttk.Entry(frame, textvariable=self.memory_limit_var, width=10).grid(
-            row=1, column=3, sticky="w", padx=6, pady=(0, 6)
-        )
-
-        frame.columnconfigure(0, weight=1)
+        # do not let any column expand; keep controls flush left
+        for col in range(4):
+            frame.columnconfigure(col, weight=0)
 
     def _build_character_setup_section(self) -> None:
         frame = ttk.LabelFrame(self.content_frame, text="Character Setup")
@@ -512,6 +564,18 @@ class RPGChatUI:
         self.story_intent_text.insert("1.0", self.state.story_intent)
         self.scene_memory_text.insert("1.0", self.state.scene_memory)
 
+        # load provider/connection related fields
+        prov = str(self.state.settings.get("provider", "local"))
+        self.connection_type_var.set(prov)
+        self.api_key_var.set(str(self.state.settings.get("api_key", "")))
+        self.model_var.set(str(self.state.settings.get("model", "")))
+
+        # reflect model availability state
+        if self.controller.is_server_connected():
+            self.model_menu.configure(state="normal")
+        else:
+            self.model_menu.configure(state="disabled")
+
     def _read_text(self, widget: ScrolledText) -> str:
         return widget.get("1.0", tk.END).strip()
 
@@ -566,6 +630,26 @@ class RPGChatUI:
         self.llm_base_url_var.set(normalized_base_url)
         self.state.settings["llm_base_url"] = normalized_base_url
 
+        # provider/mode settings
+        provider = self.connection_type_var.get()
+        self.state.settings["provider"] = provider
+        self.state.settings["api_key"] = self.api_key_var.get()
+
+        # propagate configuration directly to provider if possible
+        prov_obj = getattr(self.controller, "provider", None)
+        if prov_obj is not None:
+            # update base_url explicitly
+            if hasattr(prov_obj, "set_base_url"):
+                prov_obj.set_base_url(normalized_base_url)
+            # update api key if supported
+            if hasattr(prov_obj, "set_api_key"):
+                prov_obj.set_api_key(self.api_key_var.get())
+
+        model = self.model_var.get()
+        if model:
+            self.state.settings["model"] = model
+            self.controller.set_model(model)
+
         new_limit = self._safe_int(
             self.memory_limit_var.get(),
             self.controller.get_memory_limit(),
@@ -610,14 +694,133 @@ class RPGChatUI:
         self._push_fields_to_state()
         self._refresh_server_status()
 
+    def _apply_provider_settings_from_state(self) -> None:
+        prov_name = str(self.state.settings.get("provider", "local"))
+        try:
+            from providers import get_provider
+
+            kwargs: dict[str, str] = {}
+            # only pass relevant kwargs per provider type
+            if prov_name == "local":
+                base = self.state.settings.get("llm_base_url")
+                if base is not None:
+                    kwargs["base_url"] = str(base)
+                mod = self.state.settings.get("model")
+                if mod is not None:
+                    kwargs["model"] = str(mod)
+            elif prov_name in ("openai", "ollama_cloud"):
+                base = self.state.settings.get("llm_base_url")
+                if base is not None:
+                    kwargs["base_url"] = str(base)
+                key = self.state.settings.get("api_key")
+                if key is not None:
+                    kwargs["api_key"] = str(key)
+                mod = self.state.settings.get("model")
+                if mod is not None:
+                    kwargs["model"] = str(mod)
+            new_provider = get_provider(prov_name, **kwargs)
+            self.controller.set_provider(new_provider)
+        except Exception:
+            logger.exception("Failed restoring provider from saved state")
+
+    def _on_connection_type_change(self) -> None:
+        # when the user selects a different provider, reset some fields
+        selection = self.connection_type_var.get()
+        # update the controller provider instance
+        try:
+            from providers import get_provider
+
+            new_provider = get_provider(selection)
+            self.controller.set_provider(new_provider)
+        except Exception:
+            logger.exception("Failed to switch provider")
+
+        # set default base url depending on provider
+        if selection == "local":
+            default_url = self.controller.get_default_llm_base_url()
+        elif selection == "openai":
+            default_url = "https://api.openai.com"
+        elif selection == "ollama_cloud":
+            default_url = "https://api.ollama.com"
+        else:
+            default_url = ""
+        self.llm_base_url_var.set(default_url)
+        self.api_key_var.set("")
+        self.model_var.set("")
+        self.model_menu.configure(state="disabled")
+
+    def _on_connect(self) -> None:
+        # push current field values to state and apply to provider
+        self._push_fields_to_state()
+        self._set_llm_busy("Connecting...")
+        self.root.update_idletasks()
+        try:
+            self.controller.connect()
+        except Exception as exc:
+            msg = str(exc) or "Unknown error"
+            messagebox.showerror("Connection Failed", f"Unable to connect to LLM provider:\n{msg}")
+            self.server_status_var.set(f"LLM: Disconnected ({msg})")
+            self.model_menu.configure(state="disabled")
+            self._set_llm_idle()
+            return
+
+        # connected successfully
+        self._refresh_server_status()
+        try:
+            self._populate_model_menu()
+            self.model_menu.configure(state="normal")
+        except Exception as exc:
+            logger.exception("Error retrieving model list")
+            messagebox.showwarning("Model List", "Connected but failed to retrieve model list.")
+        self._set_llm_idle()
+
+    def _on_disconnect(self) -> None:
+        self.controller.disconnect()
+        self.server_status_var.set("LLM: Disconnected")
+        self.model_menu.configure(state="disabled")
+        self.model_var.set("")
+
+    def _on_model_selected(self, value: str) -> None:
+        self.model_var.set(value)
+        self.state.settings["model"] = value
+        self.controller.set_model(value)
+
+    def _populate_model_menu(self) -> None:
+        models = self.controller.list_models()
+        if not models:
+            messagebox.showinfo("Models", "No models were returned by provider.")
+            return
+        self.model_options = models
+        menu = self.model_menu["menu"]
+        menu.delete(0, "end")
+        for m in models:
+            menu.add_command(
+                label=m,
+                command=lambda value=m: self._on_model_selected(value),
+            )
+        # if current model not in list, pick first
+        current = self.model_var.get()
+        if current not in models:
+            self.model_var.set(models[0])
+            self.controller.set_model(models[0])
+
     def _refresh_server_status(self) -> None:
+        # update status based on provider availability
         try:
             if self.controller.is_server_connected():
-                self.server_status_var.set("LM Studio: Connected")
+                model = self.model_var.get()
+                if model:
+                    self.server_status_var.set(f"LLM: Connected ({model})")
+                else:
+                    self.server_status_var.set("LLM: Connected")
             else:
-                self.server_status_var.set("LM Studio: Disconnected")
-        except Exception:
-            self.server_status_var.set("LM Studio: Disconnected")
+                # could try to include last error via controller, but controller
+                # returns bool only; UI components set error message when connect
+                self.server_status_var.set("LLM: Disconnected")
+        except Exception as exc:
+            # log and display brief note
+            logger.exception("Error checking server status")
+            self.server_status_var.set(f"LLM: Disconnected ({exc})")
 
     def _on_send_message(self) -> None:
         if self._streaming or self._summary_running:

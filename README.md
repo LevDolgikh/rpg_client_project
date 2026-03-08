@@ -1,5 +1,7 @@
 # RPG Chat Client (v2.01final)
 
+> **Note:** version 3.00 is under active development on a feature branch. It introduces cloud provider support, manual connection workflow, and expanded settings while retaining full local LM compatibility.
+
 Desktop `tkinter` app for roleplay chat with local LLMs via LM Studio (OpenAI-compatible API).
 
 **Note:** I tested the game using local 3B–8B models and found that they very quickly lose track of the conversation and start to get confused. That context drift breaks immersion in the story and is a core limitation of using small local models.
@@ -116,3 +118,6 @@ rpg_client_project/
 ## Future Ideas
 
 - Migrate to cloud-hosted resources in a version 3 release to avoid the context limitations of local 3B–8B models and improve overall stability and immersion.
+- **(v3 preview)** multi-provider architecture: local (LM Studio/Ollama) plus OpenAI and Ollama Cloud, selectable from UI.
+- Add model selector, API key management, and explicit Connect/Disconnect controls.
+

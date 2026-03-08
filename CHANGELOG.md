@@ -2,6 +2,31 @@
 
 All notable project changes are recorded here.
 
+## [3.00] - 2026-03-08 (unreleased)
+
+### Added
+- Provider abstraction layer and `providers` package supporting multiple LLM backends.
+- New `OpenAIProvider` and `OllamaCloudProvider` implementations.
+- UI connection selector with manual "Connect" / "Disconnect" workflow.
+- Fields for Connection Type, Server URL, API Key, and dynamic Model dropdown.
+- Factory `get_provider` and controller helpers for swapping providers.
+- Settings extended with `provider`, `model`, `api_key` (non-persisted), and `llm_base_url`.
+- Provider-specific configuration methods (base_url, api_key, model). 
+- Automatic model listing after successful connection with dropdown population.
+- Status feedback improvements: busy indicator, error dialogs, model-specific status.
+
+### Changed
+- Refactored `ChatController` to use generic `LLMProvider` rather than `LLMClient`.
+- `ui.py` rewritten extensively for connection UI, provider settings, and layout adjustments.
+- `models.py` settings schema extended while preserving backward compatibility.
+- API keys are excluded from save files and logs.
+
+### Security
+- API keys stored only in runtime memory and never written to disk or shown in UI.
+
+### Notes
+- Local provider support remains identical; new cloud providers are optional.
+
 ## [2.01] - 2026-03-06
 
 ### Notes

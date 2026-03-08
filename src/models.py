@@ -4,12 +4,19 @@ from dataclasses import dataclass, field
 from typing import Any
 
 DEFAULT_SETTINGS: dict[str, Any] = {
+    # LLM generation parameters
     "temperature": 0.7,
     "top_p": 0.9,
     "presence_penalty": 0.3,
     "frequency_penalty": 0.2,
     "context_limit": 4096,
+    
+    # provider configuration for v3 migration
+    "provider": "local",  # local / openai / ollama_cloud
     "llm_base_url": "http://127.0.0.1:1234",
+    "model": "local-model",
+    "api_key": "",  # not persisted in save files
+
     "prompt_debug": False,
 }
 
@@ -30,7 +37,11 @@ class GameState:
         settings_payload = dict(DEFAULT_SETTINGS)
         for key in DEFAULT_SETTINGS:
             if key in self.settings:
-                settings_payload[key] = self.settings[key]
+                # never persist api_key
+                if key == "api_key":
+                    settings_payload[key] = ""
+                else:
+                    settings_payload[key] = self.settings[key]
 
         canonical_history: list[dict[str, str]] = []
         for turn in self.chat_history:
@@ -102,7 +113,18 @@ class GameState:
         merged_settings = dict(DEFAULT_SETTINGS)
         for key in DEFAULT_SETTINGS:
             if key in settings:
+                # ignore any api_key in file
+                if key == "api_key":
+                    continue
                 merged_settings[key] = settings[key]
+
+        # ensure backwards compatibility: older saves may not have new keys
+        if "provider" not in merged_settings:
+            merged_settings["provider"] = "local"
+        if "model" not in merged_settings:
+            merged_settings["model"] = DEFAULT_SETTINGS["model"]
+        # api_key always starts empty
+        merged_settings["api_key"] = ""
 
         return cls(
             player_name=player_name,
