@@ -76,7 +76,7 @@ class RPGChatUI:
         self.update_token_monitor()
 
     def _configure_root(self) -> None:
-        self.root.title("RPG Chat Client v2.01")
+        self.root.title("RPG Chat Client v2.01final")
         self.root.geometry("960x900")
         self.root.minsize(820, 700)
 
@@ -365,10 +365,6 @@ class RPGChatUI:
             self.advanced_frame,
             text="When enabled: logs context token usage and prompt metadata to app console.",
         ).grid(row=7, column=0, columnspan=3, sticky="w", padx=6, pady=(0, 6))
-        ttk.Label(
-            self.advanced_frame,
-            text="Values above ranges are auto-limited to avoid unstable roleplay.",
-        ).grid(row=8, column=0, columnspan=3, sticky="w", padx=6, pady=(0, 6))
 
         self._load_state_into_fields()
 

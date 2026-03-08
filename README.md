@@ -1,6 +1,8 @@
-# RPG Chat Client (v2.01)
+# RPG Chat Client (v2.01final)
 
 Desktop `tkinter` app for roleplay chat with local LLMs via LM Studio (OpenAI-compatible API).
+
+**Note:** I tested the game using local 3B–8B models and found that they very quickly lose track of the conversation and start to get confused. That context drift breaks immersion in the story and is a core limitation of using small local models.
 
 This is a hobby project for personal use and it is not deeply tested.
 Quality and stability depend heavily on the selected language model and prompt behavior.
@@ -110,3 +112,7 @@ rpg_client_project/
 - `LM Studio: Disconnected`: check that LM Studio server is running and that `LM Studio URL` is correct.
 - `Load Error`: save file does not match strict schema `version: 2`.
 - High context usage: shorten context fields and use `Make Summary`.
+
+## Future Ideas
+
+- Migrate to cloud-hosted resources in a version 3 release to avoid the context limitations of local 3B–8B models and improve overall stability and immersion.
