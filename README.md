@@ -57,12 +57,11 @@ Default LM Studio URL is `http://127.0.0.1:1234` and can be changed in `Server S
 
 ## How to Use
 
-1. Fill names and context (especially `World Description` and `Story Intent`).
-2. (Optional) Set `LM Studio URL` in `Server Status`.
-3. Enter a player message in `Message Input`.
-4. Click `Send Message`.
-5. Use `Redo Response` to regenerate the latest Character response.
-6. Use `Make Summary` to summarize older chat turns and append the result to `Scene Memory`.
+1. Fill names and context according to hints.
+2. Enter a player message in `Message Input`.
+3. Click `Send Message`.
+4. Use `Redo Response` to regenerate the latest Character response.
+5. Use `Make Summary` to summarize older chat turns and append the result to `Scene Memory`.
 
 ## Save Format
 
