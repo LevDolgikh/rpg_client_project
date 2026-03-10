@@ -1,1136 +1,418 @@
-﻿from __future__ import annotations
+"""GUI of application
+"""
 
-import json
-import logging
-import threading
-from queue import Empty, Queue
-from tkinter import BooleanVar, StringVar, Tk, filedialog, messagebox
+# ui
 import tkinter as tk
 from tkinter import ttk
-from tkinter.scrolledtext import ScrolledText
+from tkinter import filedialog, messagebox
 
-from chat_controller import ChatController
-from models import DEFAULT_SETTINGS, GameState
+# game
+from settings import DEFAULT_SETTINGS
+from game import RPG_client
 
-logger = logging.getLogger(__name__)
+# sub
+import threading
+import json
 
+class RPG_ui(tk.Tk):
+    """Main class for the RPG client GUI, responsible for creating and managing the user interface"""
 
-class RPGChatUI:
-    def __init__(self, root: Tk, controller: ChatController, state: GameState) -> None:
-        self.root = root
-        self.controller = controller
-        self.state = state
+    def __init__(self, rpg_client):
+        """Initialize the RPG client GUI and set up the main window and widgets"""
+        super().__init__()
 
-        self._stream_queue: Queue[tuple[str, str]] = Queue()
-        self._streaming = False
-        self._summary_running = False
-        self._stream_speaker = ""
-        self._stream_buffer = ""
-        self._last_request_tokens = 0
-        self._last_prompt_debug_signature: tuple[int, int, int] | None = None
+        # RPG_client
+        self.rpg_client = rpg_client
 
-        self.player_name_var = StringVar(value=self.state.player_name)
-        self.character_name_var = StringVar(value=self.state.character_name)
-        # connection/provider state
-        self.server_status_var = StringVar(value="LLM: Unknown")
-        self.connection_type_var = StringVar(
-            value=str(self.state.settings.get("provider", "local"))
+        # Server default settings
+        self.providers = DEFAULT_SETTINGS.BASE_CONNECTION_OPTIONS
+        self.providers_names = self.get_default_providers_names(self.providers)
+        self.default_provider = self.providers[0]
+        self.default_provider_name = self.default_provider['name']
+        self.server_url = self.get_server_url(self.default_provider['name'])
+        self.api_key = ""
+
+        # Server status
+        self.connected = False
+
+        # Server models
+        self.model_ids = []
+
+        # Layout
+        self.layout()
+
+    def get_default_providers_names(self, providers):
+        """Collect information about names from default providers from settings"""
+        names = []
+
+        for provider in providers:
+            names.append(provider['name'])
+
+        return names
+    
+    def get_server_url(self, name):
+        """Collect information about names from default providers from settings"""
+        url = ""
+        for provider in self.providers:
+            if provider['name'] == name:
+                url = provider['base_url']
+        return url
+    
+    def combobox_provider_selected(self, event):
+        """Actions per selecting provider: set default server adress"""
+        self.server_url = self.get_server_url(event.widget.get())
+        self.entry_server_URL.delete(0, tk.END)
+        self.entry_server_URL.insert(0, self.server_url)
+
+    def combobox_model_selected(self, event):
+        """Actions per selecting model: set model"""
+        model_selected = event.widget.get()
+        self.set_model(model_selected)
+
+    def set_model(self, model_id):
+        res = self.rpg_client.set_active_model(model_id)
+        if res:
+            status = "Connected(" + model_id +")"
+            self.label_connection.config(text = status)
+        else:
+            self.disconnect()
+            self.label_connection.config(text = "Disconnected. Model selection error")
+
+    def _generate_worker(self):
+
+        res = self.rpg_client.generate_responce(self.entry_character.get(),
+                                                self.text_char.get("1.0", "end-1c"),
+                                                self.text_world.get("1.0", "end-1c"),
+                                                self.text_chat.get("1.0", "end-1c"))
+        self.after(0, self._generate_finished, res)
+    
+    def _generate_finished(self, res):
+
+        self.button_send.config(state="normal")
+        self.button_regen.config(state="normal")
+
+        if res:
+            self.label_generation.config(text="Generation Done")
+            self.text_chat.insert(tk.END, res)
+        else:
+            self.label_generation.config(text="Generation Error")
+
+    def _connect_worker(self):
+
+        res = self.rpg_client.connect_to_llm(self.server_url, self.api_key)
+
+        self.after(0, self._connect_finished, res)
+    
+    def _connect_finished(self, res):
+
+        if res:
+            # server entry block off
+            self.button_disconnect.config(state = "normal")
+            self.connected = True
+            self.label_connection.config(text="Connected")
+            self.entry_server_URL.config(state="readonly")
+            self.entry_api.config(state="readonly")
+            
+            # Models update
+            self.model_ids = res
+            self.combobox_model.config(state = "readonly")
+            self.combobox_model.config(values=self.model_ids)
+            self.combobox_model.current(0)
+            self.set_model(self.model_ids[0])
+
+            # generation buttons
+            self.button_send.config(state='normal')
+            self.button_regen.config(state='normal')
+        else:
+            self.disconnect()
+            self.label_connection.config(text='Connection Error')
+
+    def connect(self):
+        
+        self.button_connect.config(state="disabled")
+        self.button_disconnect.config(state="disabled")
+        self.label_connection.config(text="Processing")
+
+        threading.Thread(
+            target=self._connect_worker,
+            daemon=True
+        ).start()
+        
+    def disconnect(self):
+
+        #server frame update
+        self.connected = False
+        self.rpg_client.disconnect_from_llm()
+        self.label_connection.config(text='Disconnected')
+        self.entry_server_URL.config(state = 'normal')
+        self.entry_api.config(state = 'normal')
+        self.button_connect.config(state="normal")
+
+        # models update
+        self.combobox_model.config(state = "disabled")
+        self.model_ids = []
+
+        # generation buttons update
+        self.button_send.config(state='disabled')
+        self.button_regen.config(state='disabled')
+
+    def generate(self):
+
+        self.button_send.config(state="disabled")
+        self.button_regen.config(state="disabled")
+        self.label_generation.config(text="Generating")
+
+        user_text = self.text_user_message.get("1.0", "end-1c")
+        player_name = self.entry_player.get()
+        user_message = player_name + ": " + user_text
+        self.text_user_message.delete("1.0", tk.END)
+        self.text_chat.insert(tk.END, user_message)
+
+        threading.Thread(
+            target=self._generate_worker,
+            daemon=True
+        ).start()
+    
+    def regen(self):
+        self.label_generation.config(text="Sorry not implemented yet")
+        return True
+    
+    def save_game(self):
+        file_path = filedialog.asksaveasfilename(
+            defaultextension=".json",
+            filetypes=[("JSON files", "*.json"), ("All files", "*.*")],
+            title="Save as"
         )
-        self.api_key_var = StringVar(value=str(self.state.settings.get("api_key", "")))
-        self.model_var = StringVar(value=str(self.state.settings.get("model", "")))
-        self.model_options: list[str] = []
-
-        initial_base_url = self.controller.set_llm_base_url(
-            str(self.state.settings.get("llm_base_url", self.controller.get_default_llm_base_url()))
-        )
-        self.state.settings["llm_base_url"] = initial_base_url
-        self.llm_base_url_var = StringVar(value=initial_base_url)
-        self.llm_status_var = StringVar(value="LLM: Idle")
-        initial_context_limit = self._safe_int(
-            str(self.state.settings.get("context_limit", self.controller.get_memory_limit())),
-            self.controller.get_memory_limit(),
-        )
-        self.controller.set_memory_limit(initial_context_limit)
-        self.memory_limit_var = StringVar(value=str(initial_context_limit))
-
-        self.temperature_var = StringVar(
-            value=str(self.state.settings.get("temperature", DEFAULT_SETTINGS["temperature"]))
-        )
-        self.top_p_var = StringVar(value=str(self.state.settings.get("top_p", DEFAULT_SETTINGS["top_p"])))
-        self.presence_penalty_var = StringVar(
-            value=str(
-                self.state.settings.get("presence_penalty", DEFAULT_SETTINGS["presence_penalty"])
-            )
-        )
-        self.frequency_penalty_var = StringVar(
-            value=str(
-                self.state.settings.get("frequency_penalty", DEFAULT_SETTINGS["frequency_penalty"])
-            )
-        )
-        self.prompt_debug_var = BooleanVar(
-            value=bool(self.state.settings.get("prompt_debug", DEFAULT_SETTINGS["prompt_debug"]))
-        )
-
-        self.context_tokens_var = StringVar(value="Context tokens: 0 / 0")
-        self.last_request_var = StringVar(value="Last request: 0 tokens")
-
-        self.advanced_visible = False
-
-        self._configure_root()
-        self._build_layout()
-        self._bind_events()
-        self._load_state_into_fields()
-        # ensure controller provider matches saved settings
-        self._apply_provider_settings_from_state()
-        self._refresh_server_status()
-        self.refresh_chat_history()
-        self.update_token_monitor()
-
-    def _configure_root(self) -> None:
-        self.root.title("RPG Chat Client v2.01final")
-        self.root.geometry("960x900")
-        self.root.minsize(820, 700)
-
-    def _build_layout(self) -> None:
-        container = ttk.Frame(self.root)
-        container.pack(fill=tk.BOTH, expand=True)
-
-        self.canvas = tk.Canvas(container, highlightthickness=0)
-        self.scrollbar = ttk.Scrollbar(container, orient=tk.VERTICAL, command=self.canvas.yview)
-        self.content_frame = ttk.Frame(self.canvas)
-
-        self.content_frame.bind(
-            "<Configure>",
-            lambda _e: self.canvas.configure(scrollregion=self.canvas.bbox("all")),
-        )
-
-        self.canvas_window = self.canvas.create_window((0, 0), window=self.content_frame, anchor="nw")
-        self.canvas.configure(yscrollcommand=self.scrollbar.set)
-        self.canvas.bind("<Configure>", self._on_canvas_configure)
-
-        self.canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        self.scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
-
-        self._build_server_status_section()
-        self._build_character_setup_section()
-        self._build_descriptions_section()
-        self._build_story_intent_section()
-        self._build_scene_memory_section()
-        self._build_chat_history_section()
-        self._build_message_input_section()
-        self._build_controls_section()
-        self._build_token_monitor_section()
-        self._build_advanced_options_section()
-
-    def _build_server_status_section(self) -> None:
-        frame = ttk.LabelFrame(self.content_frame, text="Server Status")
-        frame.pack(fill=tk.X, padx=10, pady=6)
-
-        # status message
-        ttk.Label(frame, textvariable=self.server_status_var).grid(
-            row=0, column=0, columnspan=4, sticky="w", padx=6, pady=6
-        )
-
-        # connection type selector
-        ttk.Label(frame, text="Connection Type:").grid(
-            row=1, column=0, sticky="e", padx=6, pady=4
-        )
-        self.connection_menu = ttk.OptionMenu(
-            frame,
-            self.connection_type_var,
-            self.connection_type_var.get(),
-            "local",
-            "openai",
-            "ollama_cloud",
-            command=lambda _v: self._on_connection_type_change(),
-        )
-        self.connection_menu.grid(row=1, column=1, sticky="w", padx=6, pady=4)
-
-        # server url / base URL
-        ttk.Label(frame, text="Server URL:").grid(
-            row=1, column=2, sticky="e", padx=6, pady=4
-        )
-        ttk.Entry(frame, textvariable=self.llm_base_url_var, width=26).grid(
-            row=1, column=3, sticky="w", padx=6, pady=4
-        )
-
-        # api key
-        ttk.Label(frame, text="API Key:").grid(
-            row=2, column=0, sticky="e", padx=6, pady=4
-        )
-        ttk.Entry(frame, textvariable=self.api_key_var, width=26, show="*").grid(
-            row=2, column=1, columnspan=3, sticky="w", padx=6, pady=4
-        )
-
-        # model selector
-        ttk.Label(frame, text="Model:").grid(
-            row=3, column=0, sticky="e", padx=6, pady=4
-        )
-        self.model_menu = ttk.OptionMenu(frame, self.model_var, self.model_var.get())
-        self.model_menu.grid(row=3, column=1, columnspan=3, sticky="w", padx=6, pady=4)
-        self.model_menu.configure(state="disabled")
-
-        # connect/disconnect buttons
-        ttk.Button(frame, text="Connect", command=self._on_connect).grid(
-            row=4, column=1, padx=6, pady=6
-        )
-        ttk.Button(frame, text="Disconnect", command=self._on_disconnect).grid(
-            row=4, column=2, padx=6, pady=6
-        )
-
-        # reset URL button remains for convenience
-        ttk.Button(frame, text="Reset Default URL", command=self._on_reset_default_url).grid(
-            row=4, column=3, padx=6, pady=6
-        )
-
-        # do not let any column expand; keep controls flush left
-        for col in range(4):
-            frame.columnconfigure(col, weight=0)
-
-    def _build_character_setup_section(self) -> None:
-        frame = ttk.LabelFrame(self.content_frame, text="Character Setup")
-        frame.pack(fill=tk.X, padx=10, pady=6)
-
-        ttk.Label(frame, text="Player Name").grid(row=0, column=0, sticky="w", padx=6, pady=6)
-        ttk.Entry(frame, textvariable=self.player_name_var, width=24).grid(
-            row=0, column=1, sticky="w", padx=6, pady=6
-        )
-
-        ttk.Label(frame, text="Character Name").grid(row=0, column=2, sticky="w", padx=6, pady=6)
-        ttk.Entry(frame, textvariable=self.character_name_var, width=24).grid(
-            row=0, column=3, sticky="w", padx=6, pady=6
-        )
-
-    def _build_descriptions_section(self) -> None:
-        frame = ttk.LabelFrame(self.content_frame, text="Descriptions")
-        frame.pack(fill=tk.BOTH, padx=10, pady=6)
-
-        ttk.Label(frame, text="Player Description").grid(row=0, column=0, sticky="w", padx=6, pady=(6, 2))
-        self.player_description_text = ScrolledText(
-            frame, height=5, wrap=tk.WORD, undo=True, autoseparators=True, maxundo=-1
-        )
-        self.player_description_text.grid(row=1, column=0, sticky="nsew", padx=6, pady=2)
-        ttk.Label(frame, text="Write short lines. One line = one idea.").grid(
-            row=2, column=0, sticky="w", padx=6, pady=(0, 6)
-        )
-
-        ttk.Label(frame, text="Character Description").grid(row=3, column=0, sticky="w", padx=6, pady=(6, 2))
-        self.character_description_text = ScrolledText(
-            frame, height=5, wrap=tk.WORD, undo=True, autoseparators=True, maxundo=-1
-        )
-        self.character_description_text.grid(row=4, column=0, sticky="nsew", padx=6, pady=2)
-        ttk.Label(frame, text="Write short lines. One line = one idea.").grid(
-            row=5, column=0, sticky="w", padx=6, pady=(0, 6)
-        )
-
-        ttk.Label(frame, text="World Description").grid(row=6, column=0, sticky="w", padx=6, pady=(6, 2))
-        self.world_scenario_text = ScrolledText(
-            frame, height=6, wrap=tk.WORD, undo=True, autoseparators=True, maxundo=-1
-        )
-        self.world_scenario_text.grid(row=7, column=0, sticky="nsew", padx=6, pady=2)
-        ttk.Label(frame, text="Describe world rules, factions, places, and atmosphere.").grid(
-            row=8, column=0, sticky="w", padx=6, pady=(0, 6)
-        )
-
-        frame.columnconfigure(0, weight=1)
-
-    def _build_story_intent_section(self) -> None:
-        frame = ttk.LabelFrame(self.content_frame, text="Story Intent")
-        frame.pack(fill=tk.BOTH, padx=10, pady=6)
-
-        self.story_intent_text = ScrolledText(
-            frame, height=5, wrap=tk.WORD, undo=True, autoseparators=True, maxundo=-1
-        )
-        self.story_intent_text.pack(fill=tk.BOTH, expand=True, padx=6, pady=(6, 2))
-        ttk.Label(
-            frame,
-            text="Guide the trajectory and tone of the story in short lines.",
-        ).pack(anchor="w", padx=6, pady=(0, 6))
-
-    def _build_scene_memory_section(self) -> None:
-        frame = ttk.LabelFrame(self.content_frame, text="Scene Memory")
-        frame.pack(fill=tk.BOTH, padx=10, pady=6)
-
-        self.scene_memory_text = ScrolledText(
-            frame, height=6, wrap=tk.WORD, undo=True, autoseparators=True, maxundo=-1
-        )
-        self.scene_memory_text.pack(fill=tk.BOTH, expand=True, padx=6, pady=(6, 2))
-        ttk.Label(
-            frame,
-            text="Keep summarized past events here as short factual lines.",
-        ).pack(anchor="w", padx=6, pady=(0, 6))
-
-    def _build_chat_history_section(self) -> None:
-        frame = ttk.LabelFrame(self.content_frame, text="Chat History")
-        frame.pack(fill=tk.BOTH, padx=10, pady=6)
-
-        self.chat_history_text = ScrolledText(frame, height=14, wrap=tk.WORD, state=tk.DISABLED)
-        self.chat_history_text.pack(fill=tk.BOTH, expand=True, padx=6, pady=(6, 2))
-        ttk.Label(
-            frame,
-            text="Read-only conversation view. Use 'Delete Last Message' to remove the latest turn.",
-        ).pack(anchor="w", padx=6, pady=(0, 6))
-
-    def _build_message_input_section(self) -> None:
-        frame = ttk.LabelFrame(self.content_frame, text="Message Input")
-        frame.pack(fill=tk.BOTH, padx=10, pady=6)
-
-        self.message_input_text = ScrolledText(
-            frame, height=4, wrap=tk.WORD, undo=True, autoseparators=True, maxundo=-1
-        )
-        self.message_input_text.pack(fill=tk.BOTH, expand=True, padx=6, pady=6)
-
-    def _build_controls_section(self) -> None:
-        frame = ttk.LabelFrame(self.content_frame, text="Controls")
-        frame.pack(fill=tk.X, padx=10, pady=6)
-
-        status_row = ttk.Frame(frame)
-        status_row.grid(row=0, column=0, sticky="ew", padx=6, pady=(6, 0))
-        ttk.Label(status_row, textvariable=self.llm_status_var).pack(side=tk.LEFT, padx=(0, 8))
-        self.llm_progress = ttk.Progressbar(status_row, mode="indeterminate", length=120)
-        self.llm_progress.pack(side=tk.LEFT)
-
-        chat_frame = ttk.LabelFrame(frame, text="Chat")
-        chat_frame.grid(row=1, column=0, sticky="ew", padx=6, pady=6)
-        persistence_frame = ttk.LabelFrame(frame, text="Persistence")
-        persistence_frame.grid(row=2, column=0, sticky="ew", padx=6, pady=(0, 6))
-
-        primary_chat_frame = ttk.LabelFrame(chat_frame, text="Primary")
-        primary_chat_frame.grid(row=0, column=0, sticky="ew", padx=6, pady=6)
-        utility_chat_frame = ttk.LabelFrame(chat_frame, text="Utilities")
-        utility_chat_frame.grid(row=1, column=0, sticky="ew", padx=6, pady=(0, 6))
-
-        self.send_button = ttk.Button(primary_chat_frame, text="Send Message", command=self._on_send_message)
-        self.redo_button = ttk.Button(primary_chat_frame, text="Redo Response", command=self._on_redo_response)
-        self.stop_button = ttk.Button(utility_chat_frame, text="Stop Generation", command=self._on_stop_generation)
-        self.delete_last_button = ttk.Button(
-            utility_chat_frame,
-            text="Delete Last Message",
-            command=self._on_delete_last_message,
-        )
-        self.summary_button = ttk.Button(utility_chat_frame, text="Make Summary", command=self._on_make_summary)
-        self.save_button = ttk.Button(persistence_frame, text="Save Game", command=self._on_save_game)
-        self.load_button = ttk.Button(persistence_frame, text="Load Game", command=self._on_load_game)
-
-        primary_chat_buttons = [
-            self.send_button,
-            self.redo_button,
-        ]
-        utility_chat_buttons = [
-            self.stop_button,
-            self.delete_last_button,
-            self.summary_button,
-        ]
-        persistence_buttons = [
-            self.save_button,
-            self.load_button,
-        ]
-
-        for idx, button in enumerate(primary_chat_buttons):
-            button.grid(row=0, column=idx, padx=6, pady=6, sticky="ew")
-
-        for idx, button in enumerate(utility_chat_buttons):
-            button.grid(row=0, column=idx, padx=6, pady=6, sticky="ew")
-
-        for idx, button in enumerate(persistence_buttons):
-            button.grid(row=0, column=idx, padx=6, pady=6, sticky="ew")
-
-        for col in range(2):
-            primary_chat_frame.columnconfigure(col, weight=1)
-        for col in range(3):
-            utility_chat_frame.columnconfigure(col, weight=1)
-        chat_frame.columnconfigure(0, weight=1)
-        for col in range(2):
-            persistence_frame.columnconfigure(col, weight=1)
-
-        frame.columnconfigure(0, weight=1)
-
-    def _build_token_monitor_section(self) -> None:
-        frame = ttk.LabelFrame(self.content_frame, text="Token Monitor")
-        frame.pack(fill=tk.X, padx=10, pady=6)
-
-        self.context_tokens_label = ttk.Label(frame, textvariable=self.context_tokens_var)
-        self.context_tokens_label.pack(anchor="w", padx=6, pady=(6, 2))
-
-        self.last_request_label = ttk.Label(frame, textvariable=self.last_request_var)
-        self.last_request_label.pack(anchor="w", padx=6, pady=(2, 6))
-
-    def _build_advanced_options_section(self) -> None:
-        section = ttk.LabelFrame(self.content_frame, text="Advanced Options")
-        section.pack(fill=tk.X, padx=10, pady=6)
-
-        self.advanced_toggle_button = ttk.Button(
-            section,
-            text="Show Advanced Options",
-            command=self._toggle_advanced_options,
-        )
-        self.advanced_toggle_button.pack(anchor="w", padx=6, pady=6)
-
-        self.advanced_frame = ttk.Frame(section)
-
-        ttk.Label(
-            self.advanced_frame,
-            text="Lower values are more stable. Higher values are more creative but less consistent.",
-        ).grid(row=0, column=0, columnspan=3, sticky="w", padx=6, pady=(4, 2))
-
-        self._labeled_entry(
-            self.advanced_frame,
-            "Temperature",
-            self.temperature_var,
-            1,
-            "Allowed 0.5-0.9, default 0.7.",
-        )
-        self._labeled_entry(
-            self.advanced_frame,
-            "Top P",
-            self.top_p_var,
-            2,
-            "Allowed 0.8-0.95, default 0.9.",
-        )
-        self._labeled_entry(
-            self.advanced_frame,
-            "Presence Penalty",
-            self.presence_penalty_var,
-            3,
-            "Allowed 0.0-0.6, default 0.3.",
-        )
-        self._labeled_entry(
-            self.advanced_frame,
-            "Frequency Penalty",
-            self.frequency_penalty_var,
-            4,
-            "Allowed 0.0-0.5, default 0.2.",
-        )
-
-        ttk.Button(
-            self.advanced_frame,
-            text="Reset Recommended",
-            command=self._reset_advanced_defaults,
-        ).grid(row=5, column=0, sticky="w", padx=6, pady=6)
-
-        ttk.Checkbutton(
-            self.advanced_frame,
-            text="Prompt Debug Mode",
-            variable=self.prompt_debug_var,
-        ).grid(row=6, column=0, columnspan=2, sticky="w", padx=6, pady=(4, 2))
-        ttk.Label(
-            self.advanced_frame,
-            text="When enabled: logs context token usage and prompt metadata to app console.",
-        ).grid(row=7, column=0, columnspan=3, sticky="w", padx=6, pady=(0, 6))
-
-        self._load_state_into_fields()
-
-    def _labeled_entry(
-        self,
-        parent: ttk.Frame,
-        label: str,
-        variable: StringVar,
-        row: int,
-        hint: str,
-    ) -> None:
-        ttk.Label(parent, text=label).grid(row=row, column=0, sticky="w", padx=6, pady=4)
-        ttk.Entry(parent, textvariable=variable, width=18).grid(
-            row=row,
-            column=1,
-            sticky="w",
-            padx=6,
-            pady=4,
-        )
-        ttk.Label(parent, text=hint).grid(row=row, column=2, sticky="w", padx=6, pady=4)
-
-    def _reset_advanced_defaults(self) -> None:
-        self.temperature_var.set(str(DEFAULT_SETTINGS["temperature"]))
-        self.top_p_var.set(str(DEFAULT_SETTINGS["top_p"]))
-        self.presence_penalty_var.set(str(DEFAULT_SETTINGS["presence_penalty"]))
-        self.frequency_penalty_var.set(str(DEFAULT_SETTINGS["frequency_penalty"]))
-        self.prompt_debug_var.set(bool(DEFAULT_SETTINGS["prompt_debug"]))
-        self.update_token_monitor()
-
-    def _bind_events(self) -> None:
-        self.root.bind_all("<MouseWheel>", self._on_mousewheel)
-        self.message_input_text.bind("<KeyRelease>", self._on_input_changed, add="+")
-        self._bind_clipboard_shortcuts()
-
-    def _bind_clipboard_shortcuts(self) -> None:
-        # Keep default Tk bindings for Ctrl+C/X/V to avoid platform/layout regressions.
-        # Add only alternative clipboard shortcuts explicitly.
-        clipboard_events = {
-            "<Control-Insert>": "<<Copy>>",
-            "<Shift-Insert>": "<<Paste>>",
-            "<Shift-Delete>": "<<Cut>>",
+        if not file_path:
+            return
+        
+        data = {
+            "server_url": self.entry_server_URL.get(),
+            "server_api": self.entry_api.get(),
+            "char_name": self.entry_character.get(),
+            "player_name": self.entry_player.get(),
+            "char_disc": self.text_char.get("1.0", "end-1c"),
+            "world_disc": self.text_world.get("1.0", "end-1c"),
+            "chat": self.text_chat.get("1.0", "end-1c")
         }
 
-        for class_name in ("Text", "Entry", "TEntry"):
-            for sequence, virtual_event in clipboard_events.items():
-                self.root.bind_class(
-                    class_name,
-                    sequence,
-                    lambda event, ve=virtual_event: self._forward_virtual_event(event, ve),
-                    add="+",
-                )
-            self.root.bind_class(
-                class_name,
-                "<Control-KeyPress>",
-                self._on_control_keypress,
-                add="+",
-            )
-
-            self.root.bind_class(
-                class_name,
-                "<Control-a>",
-                self._on_select_all,
-                add="+",
-            )
-            self.root.bind_class(
-                class_name,
-                "<Control-A>",
-                self._on_select_all,
-                add="+",
-            )
-
-    def _forward_virtual_event(self, event: tk.Event, virtual_event: str) -> str:
-        event.widget.event_generate(virtual_event)
-        return "break"
-
-    def _on_control_keypress(self, event: tk.Event) -> str | None:
-        keycode = int(getattr(event, "keycode", -1))
-        keysym = str(getattr(event, "keysym", "")).lower()
-
-        copy_keysyms = {"c", "cyrillic_es"}
-        cut_keysyms = {"x", "cyrillic_che"}
-        paste_keysyms = {"v", "cyrillic_em"}
-        select_all_keysyms = {"a", "cyrillic_ef"}
-        undo_keysyms = {"z", "cyrillic_ya"}
-        redo_keysyms = {"y", "cyrillic_en"}
-
-        if keycode == 67 or keysym in copy_keysyms:
-            event.widget.event_generate("<<Copy>>")
-            return "break"
-        if keycode == 88 or keysym in cut_keysyms:
-            event.widget.event_generate("<<Cut>>")
-            return "break"
-        if keycode == 86 or keysym in paste_keysyms:
-            event.widget.event_generate("<<Paste>>")
-            return "break"
-        if keycode == 65 or keysym in select_all_keysyms:
-            return self._on_select_all(event)
-        if keycode == 90 or keysym in undo_keysyms:
-            event.widget.event_generate("<<Undo>>")
-            return "break"
-        if keycode == 89 or keysym in redo_keysyms:
-            event.widget.event_generate("<<Redo>>")
-            return "break"
-
-        return None
-
-    def _on_select_all(self, event: tk.Event) -> str:
-        widget = event.widget
-
-        if isinstance(widget, tk.Text):
-            widget.tag_add(tk.SEL, "1.0", "end-1c")
-            widget.mark_set(tk.INSERT, "end-1c")
-            widget.see(tk.INSERT)
-            return "break"
-
-        if isinstance(widget, (tk.Entry, ttk.Entry)):
-            widget.selection_range(0, tk.END)
-            widget.icursor(tk.END)
-            return "break"
-
-        return "break"
-
-    def _on_canvas_configure(self, event: tk.Event) -> None:
-        self.canvas.itemconfigure(self.canvas_window, width=event.width)
-
-    def _on_mousewheel(self, event: tk.Event) -> None:
-        self.canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
-
-    def _on_input_changed(self, _event: tk.Event) -> None:
-        self.root.after(0, self.update_token_monitor)
-
-    def _toggle_advanced_options(self) -> None:
-        self.advanced_visible = not self.advanced_visible
-        if self.advanced_visible:
-            self.advanced_frame.pack(fill=tk.X, padx=6, pady=(0, 6))
-            self.advanced_toggle_button.configure(text="Hide Advanced Options")
-        else:
-            self.advanced_frame.pack_forget()
-            self.advanced_toggle_button.configure(text="Show Advanced Options")
-
-    def _load_state_into_fields(self) -> None:
-        self.player_description_text.insert("1.0", self.state.player_description)
-        self.character_description_text.insert("1.0", self.state.character_description)
-        self.world_scenario_text.insert("1.0", self.state.world_scenario)
-        self.story_intent_text.insert("1.0", self.state.story_intent)
-        self.scene_memory_text.insert("1.0", self.state.scene_memory)
-
-        # load provider/connection related fields
-        prov = str(self.state.settings.get("provider", "local"))
-        self.connection_type_var.set(prov)
-        self.api_key_var.set(str(self.state.settings.get("api_key", "")))
-        self.model_var.set(str(self.state.settings.get("model", "")))
-
-        # reflect model availability state
-        if self.controller.is_server_connected():
-            self.model_menu.configure(state="normal")
-        else:
-            self.model_menu.configure(state="disabled")
-
-    def _read_text(self, widget: ScrolledText) -> str:
-        return widget.get("1.0", tk.END).strip()
-
-    def _push_fields_to_state(self) -> None:
-        self.state.player_name = self.player_name_var.get().strip() or "Player"
-        self.state.character_name = self.character_name_var.get().strip() or "Character"
-
-        self.state.player_description = self._read_text(self.player_description_text)
-        self.state.character_description = self._read_text(self.character_description_text)
-        self.state.world_scenario = self._read_text(self.world_scenario_text)
-        self.state.story_intent = self._read_text(self.story_intent_text)
-        self.state.scene_memory = self._read_text(self.scene_memory_text)
-
-        temperature = self._safe_clamped_float(
-            self.temperature_var.get(),
-            float(DEFAULT_SETTINGS["temperature"]),
-            min_value=0.5,
-            max_value=0.9,
+        try:
+            with open(file_path, "w", encoding="utf-8") as f:
+                json.dump(data, f, ensure_ascii=False, indent=4)
+            self.label_save_load.config(text = "Game Ssuccessfully Saved")
+        except Exception as e:
+            self.label_save_load.config(text = "Save Error")
+                
+        
+    def load_game(self):
+        file_path = filedialog.askopenfilename(
+            filetypes=[("JSON files", "*.json"), ("All files", "*.*")],
+            title="Load from"
         )
-        top_p = self._safe_clamped_float(
-            self.top_p_var.get(),
-            float(DEFAULT_SETTINGS["top_p"]),
-            min_value=0.8,
-            max_value=0.95,
-        )
-        presence_penalty = self._safe_clamped_float(
-            self.presence_penalty_var.get(),
-            float(DEFAULT_SETTINGS["presence_penalty"]),
-            min_value=0.0,
-            max_value=0.6,
-        )
-        frequency_penalty = self._safe_clamped_float(
-            self.frequency_penalty_var.get(),
-            float(DEFAULT_SETTINGS["frequency_penalty"]),
-            min_value=0.0,
-            max_value=0.5,
-        )
-        self.temperature_var.set(f"{temperature:g}")
-        self.top_p_var.set(f"{top_p:g}")
-        self.presence_penalty_var.set(f"{presence_penalty:g}")
-        self.frequency_penalty_var.set(f"{frequency_penalty:g}")
-
-        self.controller.apply_generation_settings(
-            temperature=temperature,
-            top_p=top_p,
-            presence_penalty=presence_penalty,
-            frequency_penalty=frequency_penalty,
-            prompt_debug=bool(self.prompt_debug_var.get()),
-        )
-
-        normalized_base_url = self.controller.set_llm_base_url(self.llm_base_url_var.get())
-        self.llm_base_url_var.set(normalized_base_url)
-        self.state.settings["llm_base_url"] = normalized_base_url
-
-        # provider/mode settings
-        provider = self.connection_type_var.get()
-        self.state.settings["provider"] = provider
-        self.state.settings["api_key"] = self.api_key_var.get()
-
-        # propagate configuration directly to provider if possible
-        prov_obj = getattr(self.controller, "provider", None)
-        if prov_obj is not None:
-            # update base_url explicitly
-            if hasattr(prov_obj, "set_base_url"):
-                prov_obj.set_base_url(normalized_base_url)
-            # update api key if supported
-            if hasattr(prov_obj, "set_api_key"):
-                prov_obj.set_api_key(self.api_key_var.get())
-
-        model = self.model_var.get()
-        if model:
-            self.state.settings["model"] = model
-            self.controller.set_model(model)
-
-        new_limit = self._safe_int(
-            self.memory_limit_var.get(),
-            self.controller.get_memory_limit(),
-        )
-        self.controller.set_memory_limit(new_limit)
-        self.state.settings["context_limit"] = new_limit
-
-    def _safe_float(self, value: str, default: float) -> float:
-        try:
-            return float(value)
-        except (TypeError, ValueError):
-            return default
-
-    def _safe_clamped_float(
-        self,
-        value: str,
-        default: float,
-        min_value: float,
-        max_value: float,
-    ) -> float:
-        parsed = self._safe_float(value, default)
-        if parsed < min_value:
-            return min_value
-        if parsed > max_value:
-            return max_value
-        return parsed
-
-    def _safe_int(self, value: str, default: int) -> int:
-        try:
-            parsed = int(float(value))
-        except (TypeError, ValueError):
-            return default
-        return max(1, parsed)
-
-    def _on_reconnect(self) -> None:
-        self._push_fields_to_state()
-        self._refresh_server_status()
-
-    def _on_reset_default_url(self) -> None:
-        default_url = self.controller.get_default_llm_base_url()
-        self.llm_base_url_var.set(default_url)
-        self._push_fields_to_state()
-        self._refresh_server_status()
-
-    def _apply_provider_settings_from_state(self) -> None:
-        prov_name = str(self.state.settings.get("provider", "local"))
-        try:
-            from providers import get_provider
-
-            kwargs: dict[str, str] = {}
-            # only pass relevant kwargs per provider type
-            if prov_name == "local":
-                base = self.state.settings.get("llm_base_url")
-                if base is not None:
-                    kwargs["base_url"] = str(base)
-                mod = self.state.settings.get("model")
-                if mod is not None:
-                    kwargs["model"] = str(mod)
-            elif prov_name in ("openai", "ollama_cloud"):
-                base = self.state.settings.get("llm_base_url")
-                if base is not None:
-                    kwargs["base_url"] = str(base)
-                key = self.state.settings.get("api_key")
-                if key is not None:
-                    kwargs["api_key"] = str(key)
-                mod = self.state.settings.get("model")
-                if mod is not None:
-                    kwargs["model"] = str(mod)
-            new_provider = get_provider(prov_name, **kwargs)
-            self.controller.set_provider(new_provider)
-        except Exception:
-            logger.exception("Failed restoring provider from saved state")
-
-    def _on_connection_type_change(self) -> None:
-        # when the user selects a different provider, reset some fields
-        selection = self.connection_type_var.get()
-        # update the controller provider instance
-        try:
-            from providers import get_provider
-
-            new_provider = get_provider(selection)
-            self.controller.set_provider(new_provider)
-        except Exception:
-            logger.exception("Failed to switch provider")
-
-        # set default base url depending on provider
-        if selection == "local":
-            default_url = self.controller.get_default_llm_base_url()
-        elif selection == "openai":
-            default_url = "https://api.openai.com"
-        elif selection == "ollama_cloud":
-            default_url = "https://api.ollama.com"
-        else:
-            default_url = ""
-        self.llm_base_url_var.set(default_url)
-        self.api_key_var.set("")
-        self.model_var.set("")
-        self.model_menu.configure(state="disabled")
-
-    def _on_connect(self) -> None:
-        # push current field values to state and apply to provider
-        self._push_fields_to_state()
-        self._set_llm_busy("Connecting...")
-        self.root.update_idletasks()
-        try:
-            self.controller.connect()
-        except Exception as exc:
-            msg = str(exc) or "Unknown error"
-            messagebox.showerror("Connection Failed", f"Unable to connect to LLM provider:\n{msg}")
-            self.server_status_var.set(f"LLM: Disconnected ({msg})")
-            self.model_menu.configure(state="disabled")
-            self._set_llm_idle()
-            return
-
-        # connected successfully
-        self._refresh_server_status()
-        try:
-            self._populate_model_menu()
-            self.model_menu.configure(state="normal")
-        except Exception as exc:
-            logger.exception("Error retrieving model list")
-            messagebox.showwarning("Model List", "Connected but failed to retrieve model list.")
-        self._set_llm_idle()
-
-    def _on_disconnect(self) -> None:
-        self.controller.disconnect()
-        self.server_status_var.set("LLM: Disconnected")
-        self.model_menu.configure(state="disabled")
-        self.model_var.set("")
-
-    def _on_model_selected(self, value: str) -> None:
-        self.model_var.set(value)
-        self.state.settings["model"] = value
-        self.controller.set_model(value)
-
-    def _populate_model_menu(self) -> None:
-        models = self.controller.list_models()
-        if not models:
-            messagebox.showinfo("Models", "No models were returned by provider.")
-            return
-        self.model_options = models
-        menu = self.model_menu["menu"]
-        menu.delete(0, "end")
-        for m in models:
-            menu.add_command(
-                label=m,
-                command=lambda value=m: self._on_model_selected(value),
-            )
-        # if current model not in list, pick first
-        current = self.model_var.get()
-        if current not in models:
-            self.model_var.set(models[0])
-            self.controller.set_model(models[0])
-
-    def _refresh_server_status(self) -> None:
-        # update status based on provider availability
-        try:
-            if self.controller.is_server_connected():
-                model = self.model_var.get()
-                if model:
-                    self.server_status_var.set(f"LLM: Connected ({model})")
-                else:
-                    self.server_status_var.set("LLM: Connected")
-            else:
-                # could try to include last error via controller, but controller
-                # returns bool only; UI components set error message when connect
-                self.server_status_var.set("LLM: Disconnected")
-        except Exception as exc:
-            # log and display brief note
-            logger.exception("Error checking server status")
-            self.server_status_var.set(f"LLM: Disconnected ({exc})")
-
-    def _on_send_message(self) -> None:
-        if self._streaming or self._summary_running:
-            return
-
-        self._push_fields_to_state()
-        message = self._read_text(self.message_input_text)
-        if not message:
-            return
-
-        turn = self.controller.send_player_message(message)
-        if not turn:
-            return
-
-        self.message_input_text.delete("1.0", tk.END)
-        self.refresh_chat_history()
-
-        self._streaming = True
-        self._stream_speaker = self.state.character_name.strip() or "Character"
-        self._stream_buffer = ""
-        self._set_generation_controls_enabled(False)
-        self._set_llm_busy("Generating response...")
-
-        thread = threading.Thread(target=self._stream_generation_worker, daemon=True)
-        thread.start()
-        self.root.after(50, self._poll_stream_queue)
-
-    def _stream_generation_worker(self) -> None:
-        try:
-            response_text = self.controller.generate_character_response(
-                stream=True,
-                on_stream_token=lambda chunk: self._stream_queue.put(("chunk", chunk)),
-            )
-            self._stream_queue.put(("done", response_text))
-        except Exception as exc:
-            self._stream_queue.put(("error", str(exc)))
-
-    def _poll_stream_queue(self) -> None:
-        had_event = False
-        while True:
-            try:
-                kind, payload = self._stream_queue.get_nowait()
-            except Empty:
-                break
-
-            had_event = True
-            if kind == "chunk":
-                self._stream_buffer += payload
-                normalized_stream_text = self.controller.normalize_character_text(self._stream_buffer)
-                self.refresh_chat_history(transient_turn=(self._stream_speaker, normalized_stream_text))
-            elif kind == "done":
-                self._last_request_tokens = self.controller.estimate_text_tokens(payload)
-                self._streaming = False
-                self._stream_speaker = ""
-                self._stream_buffer = ""
-                self._set_generation_controls_enabled(True)
-                self._set_llm_idle()
-                self.refresh_chat_history()
-                self.update_token_monitor()
-            elif kind == "error":
-                self._streaming = False
-                self._stream_speaker = ""
-                self._stream_buffer = ""
-                self._set_generation_controls_enabled(True)
-                self._set_llm_idle()
-                messagebox.showerror("Generation Error", payload)
-                self.refresh_chat_history()
-                self.update_token_monitor()
-            elif kind == "summary_done":
-                summary = payload
-                self._summary_running = False
-                self._set_generation_controls_enabled(True)
-                self._set_llm_idle()
-                if summary:
-                    self.scene_memory_text.delete("1.0", tk.END)
-                    self.scene_memory_text.insert("1.0", self.state.scene_memory)
-                    self._last_request_tokens = self.controller.estimate_text_tokens(summary)
-                self.refresh_chat_history()
-                self.update_token_monitor()
-            elif kind == "summary_error":
-                self._summary_running = False
-                self._set_generation_controls_enabled(True)
-                self._set_llm_idle()
-                messagebox.showerror("Summary Error", payload)
-                self.refresh_chat_history()
-                self.update_token_monitor()
-
-        if self._streaming or self._summary_running or had_event:
-            self.root.after(50, self._poll_stream_queue)
-
-    def _on_redo_response(self) -> None:
-        if self._streaming or self._summary_running:
-            return
-
-        self._push_fields_to_state()
-        if not self.state.chat_history:
-            return
-        last_turn = self.state.chat_history[-1]
-        if not isinstance(last_turn, dict):
-            messagebox.showwarning("Redo Response", "Last turn must be a Character response.")
-            return
-        if str(last_turn.get("speaker", "")).strip().lower() != "character":
-            messagebox.showwarning("Redo Response", "Last turn must be a Character response.")
-            return
-
-        self._streaming = True
-        self._stream_speaker = self.state.character_name.strip() or "Character"
-        self._stream_buffer = ""
-        self._set_generation_controls_enabled(False)
-        self._set_llm_busy("Regenerating response...")
-
-        thread = threading.Thread(target=self._redo_stream_worker, daemon=True)
-        thread.start()
-        self.root.after(50, self._poll_stream_queue)
-
-    def _redo_stream_worker(self) -> None:
-        try:
-            response_text = self.controller.redo_response(
-                stream=True,
-                on_stream_token=lambda chunk: self._stream_queue.put(("chunk", chunk)),
-            )
-            self._stream_queue.put(("done", response_text))
-        except Exception as exc:
-            self._stream_queue.put(("error", str(exc)))
-
-    def _on_make_summary(self) -> None:
-        if self._streaming or self._summary_running:
-            return
-
-        self._push_fields_to_state()
-        self._summary_running = True
-        self._set_generation_controls_enabled(False)
-        self._set_llm_busy("Building summary...")
-
-        thread = threading.Thread(target=self._summary_worker, daemon=True)
-        thread.start()
-        self.root.after(50, self._poll_stream_queue)
-
-    def _summary_worker(self) -> None:
-        try:
-            summary = self.controller.make_summary()
-            self._stream_queue.put(("summary_done", summary))
-        except Exception as exc:
-            self._stream_queue.put(("summary_error", str(exc)))
-
-    def _on_delete_last_message(self) -> None:
-        if self._streaming or self._summary_running:
-            return
-        self._push_fields_to_state()
-        self.controller.delete_last_message()
-        self.refresh_chat_history()
-        self.update_token_monitor()
-
-    def _on_stop_generation(self) -> None:
-        self.controller.stop_generation()
-
-    def _on_save_game(self) -> None:
-        self._push_fields_to_state()
-        path = filedialog.asksaveasfilename(
-            title="Save Game",
-            defaultextension=".json",
-            filetypes=[("JSON Files", "*.json"), ("All Files", "*.*")],
-        )
-        if not path:
+        if not file_path:
             return
 
         try:
-            with open(path, "w", encoding="utf-8") as file_obj:
-                json.dump(self.state.to_dict(), file_obj, ensure_ascii=False, indent=2)
-        except OSError as exc:
-            messagebox.showerror("Save Error", str(exc))
+            with open(file_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
 
-    def _on_load_game(self) -> None:
-        if self._streaming or self._summary_running:
-            return
+            # Заполняем поля
+            self.entry_server_URL.delete(0, tk.END)
+            self.entry_server_URL.insert(0, data.get("server_url", ""))
 
-        path = filedialog.askopenfilename(
-            title="Load Game",
-            filetypes=[("JSON Files", "*.json"), ("All Files", "*.*")],
+            self.entry_api.delete(0, tk.END)
+            self.entry_api.insert(0, data.get("server_api", ""))
+
+            self.entry_character.delete(0, tk.END)
+            self.entry_character.insert(0, data.get("char_name", ""))
+
+            self.entry_player.delete(0, tk.END)
+            self.entry_player.insert(0, data.get("player_name", ""))
+
+            self.text_char.delete("1.0", tk.END)
+            self.text_char.insert("1.0", data.get("char_disc", ""))
+
+            self.text_world.delete("1.0", tk.END)
+            self.text_world.insert("1.0", data.get("world_disc", ""))
+
+            self.text_chat.delete("1.0", tk.END)
+            self.text_chat.insert("1.0", data.get("chat", ""))
+
+            self.label_save_load.config(text = "Game successfully loaded")
+        except FileNotFoundError:
+            self.label_save_load.config(text = "File Not Found")
+        except json.JSONDecodeError:
+            self.label_save_load.config(text = "Save file wrong format")
+        except Exception as e:
+            self.label_save_load.config(text = "Load Error")
+
+    def layout(self):
+        
+        # Window settings
+        self.title("RPG chat client")
+        self.geometry("800x600")
+
+        frame_global = tk.Frame(self)
+        frame_global.pack(side="top", pady=20)
+
+        # Server frame
+        frame_server = tk.LabelFrame(frame_global, text = "Server Information")
+        frame_server.grid(row=0, column=0, padx=5, pady=5, columnspan=3)
+
+        label_provider = tk.Label(frame_server, text="Provider:")
+        label_provider.grid(row=0, column=0, padx=5, pady=5, sticky="w")
+
+        self.combobox_provider = ttk.Combobox(frame_server, values = self.providers_names, state = "readonly")
+        self.combobox_provider.set(self.default_provider_name)
+        self.combobox_provider.bind("<<ComboboxSelected>>", self.combobox_provider_selected)
+        self.combobox_provider.grid(row=0, column=1, padx=5, pady=5, sticky="w")
+
+        label_api = tk.Label(frame_server, text="Presets")
+        label_api.grid(row=0, column=2, padx=5, pady=5, sticky="w")
+
+        label_server_URL = tk.Label(frame_server, text="Server URL:")
+        label_server_URL.grid(row=1, column=0, padx=5, pady=5, sticky="w")
+
+        self.entry_server_URL = tk.Entry(frame_server, width = 40)
+        self.entry_server_URL.insert(0, self.server_url)
+        self.entry_server_URL.grid(row=1, column=1, padx=5, pady=5, sticky="w")
+        
+        label_api = tk.Label(frame_server, text="Example: https://api.openai.com/v1/ (OpenAI Compatible only)")
+        label_api.grid(row=1, column=2, padx=5, pady=5, sticky="w")
+
+        label_api = tk.Label(frame_server, text="API key")
+        label_api.grid(row=2, column=0, padx=5, pady=5, sticky="w")
+
+        self.entry_api = tk.Entry(frame_server, width= 40)
+        self.entry_api.grid(row=2, column=1, padx=5, pady=5, sticky="w")
+
+        label_api = tk.Label(frame_server, text="Leave this blank for local models")
+        label_api.grid(row=2, column=2, padx=5, pady=5, sticky="w")
+        
+        # Server buttonss
+        frame_server_buttons = tk.Frame(frame_server)
+        frame_server_buttons.grid(row=3, column=0, padx=5, pady=5, columnspan=3, sticky= 'w')
+
+        self.button_connect = tk.Button(frame_server_buttons, 
+                                        text="Connect",
+                                        command=self.connect,
+                                        width = 20
         )
-        if not path:
-            return
+        self.button_connect.grid(row=0, column=0, padx=5, pady=5, sticky="w")
 
-        try:
-            with open(path, "r", encoding="utf-8") as file_obj:
-                payload = json.load(file_obj)
-        except (OSError, json.JSONDecodeError) as exc:
-            messagebox.showerror("Load Error", str(exc))
-            return
-
-        try:
-            loaded_state = GameState.from_dict(payload)
-        except ValueError as exc:
-            messagebox.showerror("Load Error", str(exc))
-            return
-
-        self.state = loaded_state
-        self.controller.state = self.state
-        self._apply_state_to_widgets()
-        self.refresh_chat_history()
-        self.update_token_monitor()
-
-    def _apply_state_to_widgets(self) -> None:
-        self.player_name_var.set(self.state.player_name)
-        self.character_name_var.set(self.state.character_name)
-
-        self.player_description_text.delete("1.0", tk.END)
-        self.player_description_text.insert("1.0", self.state.player_description)
-
-        self.character_description_text.delete("1.0", tk.END)
-        self.character_description_text.insert("1.0", self.state.character_description)
-
-        self.world_scenario_text.delete("1.0", tk.END)
-        self.world_scenario_text.insert("1.0", self.state.world_scenario)
-
-        self.story_intent_text.delete("1.0", tk.END)
-        self.story_intent_text.insert("1.0", self.state.story_intent)
-
-        self.scene_memory_text.delete("1.0", tk.END)
-        self.scene_memory_text.insert("1.0", self.state.scene_memory)
-
-        self.temperature_var.set(str(self.state.settings.get("temperature", DEFAULT_SETTINGS["temperature"])))
-        self.top_p_var.set(str(self.state.settings.get("top_p", DEFAULT_SETTINGS["top_p"])))
-        self.presence_penalty_var.set(
-            str(self.state.settings.get("presence_penalty", DEFAULT_SETTINGS["presence_penalty"]))
+        self.button_disconnect = tk.Button(frame_server_buttons, 
+                                text="Disconnect",
+                                command=self.disconnect,
+                                width = 20
         )
-        self.frequency_penalty_var.set(
-            str(self.state.settings.get("frequency_penalty", DEFAULT_SETTINGS["frequency_penalty"]))
+        self.button_disconnect.grid(row=0, column=1, padx=5, pady=5, sticky="w")
+
+        self.label_connection = tk.Label(frame_server_buttons, text="Disconnected")
+        self.label_connection.grid(row=0, column=2, padx=5, pady=5, sticky="w")
+        
+        # World and character settings frame
+        frame_world_character = tk.LabelFrame(frame_global, text = "World and Character Settings", width=100)
+        frame_world_character.grid(row=1, column=0, padx=5, pady=5, columnspan=3)
+
+        label_model = tk.Label(frame_world_character, text="Model:")
+        label_model.grid(row=0, column=0, padx=5, pady=5, sticky="w")
+
+        self.combobox_model = ttk.Combobox(frame_world_character, values = self.model_ids, state = "disabled")
+        self.combobox_model.bind("<<ComboboxSelected>>", self.combobox_model_selected)
+        self.combobox_model.grid(row=1, column=0, padx=5, pady=5, sticky="w")
+
+        label_character_name = tk.Label(frame_world_character, text="Character name:")
+        label_character_name.grid(row=2, column=0, padx=5, pady=5, sticky="w")
+
+        self.entry_character= tk.Entry(frame_world_character)
+        self.entry_character.grid(row=3, column=0, padx=5, pady=5, sticky="w")
+
+        label_player_name = tk.Label(frame_world_character, text="Player name:")
+        label_player_name.grid(row=4, column=0, padx=5, pady=5, sticky="w")
+
+        self.entry_player= tk.Entry(frame_world_character)
+        self.entry_player.grid(row=5, column=0, padx=5, pady=5, sticky="w")
+
+        label_world = tk.Label(frame_world_character, text="World Information and Scenario")
+        label_world.grid(row=0, column=1, padx=5, pady=5, sticky="w")
+
+        self.text_world = tk.Text(frame_world_character, height=10, width=31)
+        self.text_world.grid(row=1, column=1, padx=5, pady=5, sticky="w", rowspan= 6)
+        
+        label_char = tk.Label(frame_world_character, text="Character Information")
+        label_char.grid(row=0, column=2, padx=5, pady=5, sticky="w")
+
+        self.text_char = tk.Text(frame_world_character, height=10, width=31)
+        self.text_char.grid(row=1, column=2, padx=5, pady=5, sticky="w", rowspan= 6)
+
+        # Chat section
+        frame_chat= tk.LabelFrame(frame_global, text = "Chat")
+        frame_chat.grid(row=2, column=0, padx=5, pady=5, columnspan=3)
+
+        self.text_chat = tk.Text(frame_chat, height=8, width=83)
+        self.text_chat.grid(row=0, column=0, padx=5, pady=5, sticky="w")
+
+        label_user_message = tk.Label(frame_chat, text="Your message")
+        label_user_message.grid(row=1, column=0, padx=5, pady=5, sticky="w")
+
+        self.text_user_message = tk.Text(frame_chat, height=4, width=83)
+        self.text_user_message.grid(row=2, column=0, padx=5, pady=5, sticky="w")
+
+        #  Chat and save/load controls
+        frame_chat_buttons = tk.Frame(frame_chat)
+        frame_chat_buttons.grid(row=3, column=0, padx=5, pady=5, columnspan=3, sticky= 'w')
+
+        self.button_send = tk.Button(frame_chat_buttons, 
+                                     text="Send message",
+                                     command=self.generate,
+                                     width = 20,
+                                     state="disabled"
         )
-        self.prompt_debug_var.set(
-            bool(self.state.settings.get("prompt_debug", DEFAULT_SETTINGS["prompt_debug"]))
+        self.button_send.grid(row=0, column=0, padx=5, pady=5, sticky="w")
+
+        self.button_regen = tk.Button(frame_chat_buttons, 
+                                text="Regenerate last",
+                                command=self.regen,
+                                width = 20,
+                                state="disabled"
         )
-        loaded_base_url = self.controller.set_llm_base_url(
-            str(self.state.settings.get("llm_base_url", self.controller.get_default_llm_base_url()))
+        self.button_regen.grid(row=0, column=1, padx=5, pady=5, sticky="w")
+
+        self.label_generation = tk.Label(frame_chat_buttons, text="Send message to start")
+        self.label_generation.grid(row=0, column=2, padx=5, pady=5, sticky="w")
+
+        # Chat controls
+        self.button_save = tk.Button(frame_chat_buttons, 
+                                     text="Save game",
+                                     command=self.save_game,
+                                     width = 20,    
+                                     state="normal"
         )
-        self.state.settings["llm_base_url"] = loaded_base_url
-        self.llm_base_url_var.set(loaded_base_url)
-        loaded_context_limit = self._safe_int(
-            str(self.state.settings.get("context_limit", self.controller.get_memory_limit())),
-            self.controller.get_memory_limit(),
+        self.button_save.grid(row=1, column=0, padx=5, pady=5, sticky="w")
+
+        self.button_load = tk.Button(frame_chat_buttons, 
+                                text="Load game",
+                                command=self.load_game,
+                                width = 20,
+                                state="normal"
         )
-        self.controller.set_memory_limit(loaded_context_limit)
-        self.memory_limit_var.set(str(loaded_context_limit))
+        self.button_load.grid(row=1, column=1, padx=5, pady=5, sticky="w")
 
-    def _set_generation_controls_enabled(self, enabled: bool) -> None:
-        state = tk.NORMAL if enabled else tk.DISABLED
-        self.send_button.configure(state=state)
-        self.redo_button.configure(state=state)
-        self.summary_button.configure(state=state)
-        self.delete_last_button.configure(state=state)
-        self.save_button.configure(state=state)
-        self.load_button.configure(state=state)
-        self.stop_button.configure(state=tk.NORMAL)
+        self.label_save_load = tk.Label(frame_chat_buttons, text="")
+        self.label_save_load.grid(row=1, column=2, padx=5, pady=5, sticky="w")
 
-    def _set_llm_busy(self, message: str) -> None:
-        self.llm_status_var.set(f"LLM: {message}")
-        self.llm_progress.start(10)
+       
 
-    def _set_llm_idle(self) -> None:
-        self.llm_status_var.set("LLM: Idle")
-        self.llm_progress.stop()
+if __name__ == "__main__":
+    """Test of GUI"""
 
-    def refresh_chat_history(self, transient_turn: tuple[str, str] | None = None) -> None:
-        chat_history_text = self.controller.get_chat_history_text() if self.state.chat_history else ""
-        if transient_turn is not None and transient_turn[1]:
-            transient_text = f"{transient_turn[0]}: {transient_turn[1]}"
-            chat_history_text = f"{chat_history_text}\n\n{transient_text}" if chat_history_text else transient_text
+    # Init
+    rpg_client = RPG_client()
+    app = RPG_ui(rpg_client)
 
-        self.chat_history_text.configure(state=tk.NORMAL)
-        self.chat_history_text.delete("1.0", tk.END)
-        self.chat_history_text.insert("1.0", chat_history_text)
-        self.chat_history_text.configure(state=tk.DISABLED)
-        self.chat_history_text.see(tk.END)
+    # providers name test
+    provider_names = app.get_default_providers_names(DEFAULT_SETTINGS.BASE_CONNECTION_OPTIONS)
+    print(provider_names)
 
-    def update_token_monitor(self) -> None:
-        self._push_fields_to_state()
+    app.mainloop()
 
-        used_tokens, max_tokens = self.controller.preview_context_tokens(
-            user_input=self._read_text(self.message_input_text),
-        )
-
-        self.context_tokens_var.set(f"Context tokens: {used_tokens} / {max_tokens}")
-        self.last_request_var.set(f"Last request: {self._last_request_tokens} tokens")
-
-        ratio = 0.0 if max_tokens <= 0 else used_tokens / max_tokens
-        if ratio < 0.6:
-            color = "green"
-        elif ratio < 0.8:
-            color = "orange"
-        else:
-            color = "red"
-
-        self.context_tokens_label.configure(foreground=color)
-
-        if self.state.settings.get("prompt_debug", False):
-            signature = (
-                used_tokens,
-                max_tokens,
-                len(self.state.chat_history),
-            )
-            if signature != self._last_prompt_debug_signature:
-                logger.info(
-                    "Prompt Debug - tokens: %s/%s, chat_turns=%s",
-                    used_tokens,
-                    max_tokens,
-                    signature[2],
-                )
-                self._last_prompt_debug_signature = signature
-        else:
-            self._last_prompt_debug_signature = None
-
-    def run(self) -> None:
-        self.root.mainloop()
