@@ -1,14 +1,22 @@
-# Application start file
-from game import RPG_client
-from ui import RPG_ui
+"""Application entry point."""
+
+import logging
+
+from game import RPGClient
+from ui import RPGUI
 
 
-def main():
+def configure_logging() -> None:
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
+    )
 
-    # Init
-    rpg_client = RPG_client()
-    app = RPG_ui(rpg_client)
 
+def main() -> None:
+    configure_logging()
+    rpg_client = RPGClient()
+    app = RPGUI(rpg_client)
     app.mainloop()
 
 

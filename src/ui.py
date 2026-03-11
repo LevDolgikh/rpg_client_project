@@ -1,181 +1,331 @@
-"""GUI of application
-"""
+"""Tkinter GUI for the RPG chat client."""
 
-# ui
-import tkinter as tk
-from tkinter import ttk
-from tkinter import filedialog, messagebox
+from __future__ import annotations
 
-# game
-from settings import DEFAULT_SETTINGS
-from game import RPG_client
-
-# sub
-import threading
 import json
+import logging
+import threading
+import tkinter as tk
+from tkinter import filedialog
+from tkinter import ttk
 
-class RPG_ui(tk.Tk):
-    """Main class for the RPG client GUI, responsible for creating and managing the user interface"""
+from game import OperationResult, RPGClient
+from settings import AppSettings
 
-    def __init__(self, rpg_client):
-        """Initialize the RPG client GUI and set up the main window and widgets"""
+
+logger = logging.getLogger(__name__)
+
+
+class RPGUI(tk.Tk):
+    """Main GUI window."""
+
+    def __init__(self, rpg_client: RPGClient) -> None:
         super().__init__()
-
-        # RPG_client
         self.rpg_client = rpg_client
 
-        # Server default settings
-        self.providers = DEFAULT_SETTINGS.BASE_CONNECTION_OPTIONS
-        self.providers_names = self.get_default_providers_names(self.providers)
+        self.providers = AppSettings.BASE_CONNECTION_OPTIONS
+        self.provider_names = [provider["name"] for provider in self.providers]
         self.default_provider = self.providers[0]
-        self.default_provider_name = self.default_provider['name']
-        self.server_url = self.get_server_url(self.default_provider['name'])
-        self.api_key = ""
+        self.default_provider_name = self.default_provider["name"]
+        self.model_ids: list[str] = []
 
-        # Server status
-        self.connected = False
+        self._build_layout()
+        self._set_server_url_from_provider(self.default_provider_name)
 
-        # Server models
-        self.model_ids = []
+    def _build_layout(self) -> None:
+        self.title("RPG Chat Client")
+        self.geometry("900x650")
 
-        # Layout
-        self.layout()
+        frame_global = tk.Frame(self)
+        frame_global.pack(side="top", pady=20)
 
-    def get_default_providers_names(self, providers):
-        """Collect information about names from default providers from settings"""
-        names = []
+        frame_server = tk.LabelFrame(frame_global, text="Server Information")
+        frame_server.grid(row=0, column=0, padx=5, pady=5, columnspan=3)
 
-        for provider in providers:
-            names.append(provider['name'])
+        tk.Label(frame_server, text="Provider:").grid(
+            row=0, column=0, padx=5, pady=5, sticky="w"
+        )
 
-        return names
-    
-    def get_server_url(self, name):
-        """Collect information about names from default providers from settings"""
-        url = ""
+        self.combobox_provider = ttk.Combobox(
+            frame_server,
+            values=self.provider_names,
+            state="readonly",
+        )
+        self.combobox_provider.set(self.default_provider_name)
+        self.combobox_provider.bind("<<ComboboxSelected>>", self.on_provider_selected)
+        self.combobox_provider.grid(row=0, column=1, padx=5, pady=5, sticky="w")
+
+        tk.Label(frame_server, text="Presets").grid(
+            row=0, column=2, padx=5, pady=5, sticky="w"
+        )
+
+        tk.Label(frame_server, text="Server URL:").grid(
+            row=1, column=0, padx=5, pady=5, sticky="w"
+        )
+        self.entry_server_url = tk.Entry(frame_server, width=40)
+        self.entry_server_url.grid(row=1, column=1, padx=5, pady=5, sticky="w")
+        tk.Label(
+            frame_server,
+            text="Example: https://api.openai.com/v1/ (OpenAI-compatible only)",
+        ).grid(row=1, column=2, padx=5, pady=5, sticky="w")
+
+        tk.Label(frame_server, text="API key:").grid(
+            row=2, column=0, padx=5, pady=5, sticky="w"
+        )
+        self.entry_api_key = tk.Entry(frame_server, width=40, show="*")
+        self.entry_api_key.grid(row=2, column=1, padx=5, pady=5, sticky="w")
+        tk.Label(frame_server, text="Leave blank for local models").grid(
+            row=2, column=2, padx=5, pady=5, sticky="w"
+        )
+
+        frame_server_buttons = tk.Frame(frame_server)
+        frame_server_buttons.grid(row=3, column=0, padx=5, pady=5, columnspan=3, sticky="w")
+
+        self.button_connect = tk.Button(
+            frame_server_buttons, text="Connect", command=self.connect, width=20
+        )
+        self.button_connect.grid(row=0, column=0, padx=5, pady=5, sticky="w")
+
+        self.button_disconnect = tk.Button(
+            frame_server_buttons, text="Disconnect", command=self.disconnect, width=20
+        )
+        self.button_disconnect.grid(row=0, column=1, padx=5, pady=5, sticky="w")
+
+        self.label_connection = tk.Label(frame_server_buttons, text="Disconnected")
+        self.label_connection.grid(row=0, column=2, padx=5, pady=5, sticky="w")
+
+        frame_world_character = tk.LabelFrame(
+            frame_global, text="World and Character Settings", width=100
+        )
+        frame_world_character.grid(row=1, column=0, padx=5, pady=5, columnspan=3)
+
+        tk.Label(frame_world_character, text="Model:").grid(
+            row=0, column=0, padx=5, pady=5, sticky="w"
+        )
+        self.combobox_model = ttk.Combobox(
+            frame_world_character, values=self.model_ids, state="disabled"
+        )
+        self.combobox_model.bind("<<ComboboxSelected>>", self.on_model_selected)
+        self.combobox_model.grid(row=1, column=0, padx=5, pady=5, sticky="w")
+
+        tk.Label(frame_world_character, text="Character name:").grid(
+            row=2, column=0, padx=5, pady=5, sticky="w"
+        )
+        self.entry_character_name = tk.Entry(frame_world_character)
+        self.entry_character_name.grid(row=3, column=0, padx=5, pady=5, sticky="w")
+
+        tk.Label(frame_world_character, text="Player name:").grid(
+            row=4, column=0, padx=5, pady=5, sticky="w"
+        )
+        self.entry_player_name = tk.Entry(frame_world_character)
+        self.entry_player_name.grid(row=5, column=0, padx=5, pady=5, sticky="w")
+
+        tk.Label(frame_world_character, text="World Information and Scenario").grid(
+            row=0, column=1, padx=5, pady=5, sticky="w"
+        )
+        self.text_world_description = tk.Text(frame_world_character, height=10, width=31)
+        self.text_world_description.grid(
+            row=1, column=1, padx=5, pady=5, sticky="w", rowspan=6
+        )
+
+        tk.Label(frame_world_character, text="Character Information").grid(
+            row=0, column=2, padx=5, pady=5, sticky="w"
+        )
+        self.text_character_description = tk.Text(frame_world_character, height=10, width=31)
+        self.text_character_description.grid(
+            row=1, column=2, padx=5, pady=5, sticky="w", rowspan=6
+        )
+
+        frame_chat = tk.LabelFrame(frame_global, text="Chat")
+        frame_chat.grid(row=2, column=0, padx=5, pady=5, columnspan=3)
+
+        self.text_chat = tk.Text(frame_chat, height=8, width=93)
+        self.text_chat.grid(row=0, column=0, padx=5, pady=5, sticky="w")
+
+        tk.Label(frame_chat, text="Your message:").grid(
+            row=1, column=0, padx=5, pady=5, sticky="w"
+        )
+        self.text_user_message = tk.Text(frame_chat, height=4, width=93)
+        self.text_user_message.grid(row=2, column=0, padx=5, pady=5, sticky="w")
+
+        frame_chat_buttons = tk.Frame(frame_chat)
+        frame_chat_buttons.grid(row=3, column=0, padx=5, pady=5, columnspan=3, sticky="w")
+
+        self.button_send = tk.Button(
+            frame_chat_buttons,
+            text="Send message",
+            command=self.generate,
+            width=20,
+            state="disabled",
+        )
+        self.button_send.grid(row=0, column=0, padx=5, pady=5, sticky="w")
+
+        self.button_regenerate = tk.Button(
+            frame_chat_buttons,
+            text="Regenerate last",
+            command=self.regenerate,
+            width=20,
+            state="disabled",
+        )
+        self.button_regenerate.grid(row=0, column=1, padx=5, pady=5, sticky="w")
+
+        self.label_generation = tk.Label(frame_chat_buttons, text="Send message to start")
+        self.label_generation.grid(row=0, column=2, padx=5, pady=5, sticky="w")
+
+        self.button_save = tk.Button(
+            frame_chat_buttons,
+            text="Save game",
+            command=self.save_game,
+            width=20,
+            state="normal",
+        )
+        self.button_save.grid(row=1, column=0, padx=5, pady=5, sticky="w")
+
+        self.button_load = tk.Button(
+            frame_chat_buttons,
+            text="Load game",
+            command=self.load_game,
+            width=20,
+            state="normal",
+        )
+        self.button_load.grid(row=1, column=1, padx=5, pady=5, sticky="w")
+
+        self.label_save_load = tk.Label(frame_chat_buttons, text="")
+        self.label_save_load.grid(row=1, column=2, padx=5, pady=5, sticky="w")
+
+    def _set_server_url_from_provider(self, provider_name: str) -> None:
+        base_url = ""
         for provider in self.providers:
-            if provider['name'] == name:
-                url = provider['base_url']
-        return url
-    
-    def combobox_provider_selected(self, event):
-        """Actions when selecting a provider: set default server address"""
-        self.server_url = self.get_server_url(event.widget.get())
-        self.entry_server_URL.delete(0, tk.END)
-        self.entry_server_URL.insert(0, self.server_url)
+            if provider["name"] == provider_name:
+                base_url = provider["base_url"]
+                break
 
-    def combobox_model_selected(self, event):
-        """Actions per selecting model: set model"""
-        model_selected = event.widget.get()
-        self.set_model(model_selected)
+        self.entry_server_url.config(state="normal")
+        self.entry_server_url.delete(0, tk.END)
+        self.entry_server_url.insert(0, base_url)
 
-    def set_model(self, model_id):
-        res = self.rpg_client.set_active_model(model_id)
-        if res:
-            status = "Connected(" + model_id +")"
-            self.label_connection.config(text = status)
-        else:
+    def on_provider_selected(self, event: tk.Event) -> None:
+        self._set_server_url_from_provider(event.widget.get())
+
+    def on_model_selected(self, event: tk.Event) -> None:
+        model_id = event.widget.get()
+        self._apply_model_selection(model_id)
+
+    def _apply_model_selection(self, model_id: str) -> None:
+        result = self.rpg_client.set_active_model(model_id)
+        if result.ok:
+            self.label_connection.config(text=f"Connected ({model_id})")
+            return
+
+        self.label_connection.config(text=f"Model error: {result.error}")
+        self.disconnect()
+
+    def _connect_worker(self, base_url: str, api_key: str) -> None:
+        result = self.rpg_client.connect_to_llm(base_url=base_url, api_key=api_key)
+        self.after(0, self._on_connect_finished, result)
+
+    def _on_connect_finished(self, result: OperationResult) -> None:
+        self.button_connect.config(state="normal")
+
+        if not result.ok:
             self.disconnect()
-            self.label_connection.config(text = "Disconnected. Model selection error")
+            self.label_connection.config(text=f"Connection error: {result.error}")
+            return
 
-    def _generate_worker(self,
-                         character_name,
-                         character_description,
-                         world_description,
-                         message_history):
+        model_ids = result.value or []
+        self.model_ids = list(model_ids)
+        self.entry_server_url.config(state="readonly")
+        self.entry_api_key.config(state="readonly")
+        self.button_disconnect.config(state="normal")
+        self.label_connection.config(text="Connected")
 
-        res = self.rpg_client.generate_response(character_name,
-                                                character_description,
-                                                world_description,
-                                                message_history)
-        self.after(0, self._generate_finished, res)
-    
-    def _generate_finished(self, res):
+        self.combobox_model.config(state="readonly", values=self.model_ids)
+        if self.model_ids:
+            self.combobox_model.set(self.model_ids[0])
+            self._apply_model_selection(self.model_ids[0])
 
         self.button_send.config(state="normal")
-        self.button_regen.config(state="normal")
-        self.text_chat.config(state="normal")
+        self.button_regenerate.config(state="normal")
 
-        if res:
-            self.label_generation.config(text="Generation Done")
-            self.text_chat.insert(tk.END, res)
-        else:
-            self.label_generation.config(text="Generation Error")
+    def connect(self) -> None:
+        base_url = self.entry_server_url.get().strip()
+        api_key = self.entry_api_key.get().strip()
 
-    def _connect_worker(self):
-
-        res = self.rpg_client.connect_to_llm(self.server_url, self.api_key)
-
-        self.after(0, self._connect_finished, res)
-    
-    def _connect_finished(self, res):
-
-        if res:
-            # server entry block off
-            self.button_disconnect.config(state = "normal")
-            self.connected = True
-            self.label_connection.config(text="Connected")
-            self.entry_server_URL.config(state="readonly")
-            self.entry_api.config(state="readonly")
-            
-            # Models update
-            self.model_ids = res
-            self.combobox_model.config(state = "readonly")
-            self.combobox_model.config(values=self.model_ids)
-            self.combobox_model.current(0)
-            self.set_model(self.model_ids[0])
-
-            # generation buttons
-            self.button_send.config(state='normal')
-            self.button_regen.config(state='normal')
-        else:
-            self.disconnect()
-            self.label_connection.config(text='Connection Error')
-
-    def connect(self):
-        
         self.button_connect.config(state="disabled")
         self.button_disconnect.config(state="disabled")
-        self.label_connection.config(text="Processing")
+        self.label_connection.config(text="Connecting...")
 
         threading.Thread(
             target=self._connect_worker,
-            daemon=True
+            args=(base_url, api_key),
+            daemon=True,
         ).start()
-        
-    def disconnect(self):
 
-        #server frame update
-        self.connected = False
+    def disconnect(self) -> None:
         self.rpg_client.disconnect_from_llm()
-        self.label_connection.config(text='Disconnected')
-        self.entry_server_URL.config(state = 'normal')
-        self.entry_api.config(state = 'normal')
-        self.button_connect.config(state="normal")
-
-        # models update
-        self.combobox_model.config(state = "disabled")
         self.model_ids = []
+        self.label_connection.config(text="Disconnected")
 
-        # generation buttons update
-        self.button_send.config(state='disabled')
-        self.button_regen.config(state='disabled')
+        self.entry_server_url.config(state="normal")
+        self.entry_api_key.config(state="normal")
+        self.button_connect.config(state="normal")
+        self.button_disconnect.config(state="normal")
 
-    def generate(self):
+        self.combobox_model.set("")
+        self.combobox_model.config(state="disabled", values=[])
+        self.button_send.config(state="disabled")
+        self.button_regenerate.config(state="disabled")
+
+    def _generate_worker(
+        self,
+        character_name: str,
+        character_description: str,
+        world_description: str,
+        message_history: str,
+    ) -> None:
+        result = self.rpg_client.generate_response(
+            character_name=character_name,
+            character_description=character_description,
+            world_description=world_description,
+            message_history=message_history,
+        )
+        self.after(0, self._on_generation_finished, result)
+
+    def _on_generation_finished(self, result: OperationResult) -> None:
+        self.button_send.config(state="normal")
+        self.button_regenerate.config(state="normal")
+        self.text_chat.config(state="normal")
+
+        if result.ok:
+            self.label_generation.config(text="Generation done")
+            self.text_chat.insert(tk.END, result.value)
+            return
+
+        self.label_generation.config(text=f"Generation error: {result.error}")
+        logger.error("Generation failed: %s", result.error)
+
+    def generate(self) -> None:
+        user_text = self.text_user_message.get("1.0", "end-1c").strip()
+        player_name = self.entry_player_name.get().strip() or "Player"
+        user_message = f"{player_name}: {user_text}".strip()
+
+        if not user_text:
+            self.label_generation.config(text="Generation error: message is empty")
+            return
+
+        character_name = self.entry_character_name.get().strip()
+        character_description = self.text_character_description.get("1.0", "end-1c").strip()
+        world_description = self.text_world_description.get("1.0", "end-1c").strip()
+        chat_history = self.text_chat.get("1.0", "end-1c").strip()
+
+        if chat_history:
+            message_history = f"{chat_history}\n{user_message}"
+        else:
+            message_history = user_message
 
         self.button_send.config(state="disabled")
-        self.button_regen.config(state="disabled")
-        self.label_generation.config(text="Generating")
-
-        user_text = self.text_user_message.get("1.0", "end-1c")
-        player_name = self.entry_player.get()
-        user_message = player_name + ": " + user_text
-
-        character_name = self.entry_character.get()
-        character_description = self.text_char.get("1.0", "end-1c")
-        world_description = self.text_world.get("1.0", "end-1c")
-        chat_history = self.text_chat.get("1.0", "end-1c")
-        message_history = (chat_history + "\n" + user_message).strip() if chat_history else user_message
+        self.button_regenerate.config(state="disabled")
+        self.label_generation.config(text="Generating...")
 
         self.text_user_message.delete("1.0", tk.END)
         self.text_chat.insert(tk.END, user_message)
@@ -183,253 +333,93 @@ class RPG_ui(tk.Tk):
 
         threading.Thread(
             target=self._generate_worker,
-            args=(character_name,
-                  character_description,
-                  world_description,
-                  message_history),
-            daemon=True
+            args=(
+                character_name,
+                character_description,
+                world_description,
+                message_history,
+            ),
+            daemon=True,
         ).start()
-    
-    def regen(self):
-        self.label_generation.config(text="Sorry not implemented yet")
-        return True
-    
-    def save_game(self):
+
+    def regenerate(self) -> None:
+        self.label_generation.config(text="Not implemented yet")
+
+    def save_game(self) -> None:
         file_path = filedialog.asksaveasfilename(
             defaultextension=".json",
             filetypes=[("JSON files", "*.json"), ("All files", "*.*")],
-            title="Save as"
+            title="Save as",
         )
         if not file_path:
             return
-        
+
         data = {
-            "server_url": self.entry_server_URL.get(),
-            "server_api": self.entry_api.get(),
-            "char_name": self.entry_character.get(),
-            "player_name": self.entry_player.get(),
-            "char_desc": self.text_char.get("1.0", "end-1c"),
-            "world_desc": self.text_world.get("1.0", "end-1c"),
-            "chat": self.text_chat.get("1.0", "end-1c")
+            "server_url": self.entry_server_url.get(),
+            "server_api": self.entry_api_key.get(),
+            "char_name": self.entry_character_name.get(),
+            "player_name": self.entry_player_name.get(),
+            "char_desc": self.text_character_description.get("1.0", "end-1c"),
+            "world_desc": self.text_world_description.get("1.0", "end-1c"),
+            "chat": self.text_chat.get("1.0", "end-1c"),
         }
 
         try:
-            with open(file_path, "w", encoding="utf-8") as f:
-                json.dump(data, f, ensure_ascii=False, indent=4)
-            self.label_save_load.config(text = "Game successfully saved")
-        except Exception as e:
-            self.label_save_load.config(text = "Save Error")
-                
-        
-    def load_game(self):
+            with open(file_path, "w", encoding="utf-8") as file:
+                json.dump(data, file, ensure_ascii=False, indent=4)
+            self.label_save_load.config(text="Game successfully saved")
+        except OSError as exc:
+            logger.exception("Failed to save game.")
+            self.label_save_load.config(text=f"Save error: {exc}")
+
+    def load_game(self) -> None:
         file_path = filedialog.askopenfilename(
             filetypes=[("JSON files", "*.json"), ("All files", "*.*")],
-            title="Load from"
+            title="Load from",
         )
         if not file_path:
             return
 
         try:
-            with open(file_path, "r", encoding="utf-8") as f:
-                data = json.load(f)
-
-            # Заполняем поля
-            self.entry_server_URL.delete(0, tk.END)
-            self.entry_server_URL.insert(0, data.get("server_url", ""))
-
-            self.entry_api.delete(0, tk.END)
-            self.entry_api.insert(0, data.get("server_api", ""))
-
-            self.entry_character.delete(0, tk.END)
-            self.entry_character.insert(0, data.get("char_name", ""))
-
-            self.entry_player.delete(0, tk.END)
-            self.entry_player.insert(0, data.get("player_name", ""))
-
-            self.text_char.delete("1.0", tk.END)
-            self.text_char.insert("1.0", data.get("char_desc", ""))
-
-            self.text_world.delete("1.0", tk.END)
-            self.text_world.insert("1.0", data.get("world_desc", ""))
-
-            self.text_chat.delete("1.0", tk.END)
-            self.text_chat.insert("1.0", data.get("chat", ""))
-
-            self.label_save_load.config(text = "Game successfully loaded")
+            with open(file_path, "r", encoding="utf-8") as file:
+                data = json.load(file)
         except FileNotFoundError:
-            self.label_save_load.config(text = "File Not Found")
-        except json.JSONDecodeError:
-            self.label_save_load.config(text = "Save file wrong format")
-        except Exception as e:
-            self.label_save_load.config(text = "Load Error")
+            self.label_save_load.config(text="File not found")
+            return
+        except json.JSONDecodeError as exc:
+            self.label_save_load.config(text=f"Wrong JSON format: {exc}")
+            return
+        except OSError as exc:
+            logger.exception("Failed to load save file.")
+            self.label_save_load.config(text=f"Load error: {exc}")
+            return
 
-    def layout(self):
-        
-        # Window settings
-        self.title("RPG chat client")
-        self.geometry("800x600")
+        self.entry_server_url.config(state="normal")
+        self.entry_server_url.delete(0, tk.END)
+        self.entry_server_url.insert(0, data.get("server_url", ""))
 
-        frame_global = tk.Frame(self)
-        frame_global.pack(side="top", pady=20)
+        self.entry_api_key.config(state="normal")
+        self.entry_api_key.delete(0, tk.END)
+        self.entry_api_key.insert(0, data.get("server_api", ""))
 
-        # Server frame
-        frame_server = tk.LabelFrame(frame_global, text = "Server Information")
-        frame_server.grid(row=0, column=0, padx=5, pady=5, columnspan=3)
+        self.entry_character_name.delete(0, tk.END)
+        self.entry_character_name.insert(0, data.get("char_name", ""))
 
-        label_provider = tk.Label(frame_server, text="Provider:")
-        label_provider.grid(row=0, column=0, padx=5, pady=5, sticky="w")
+        self.entry_player_name.delete(0, tk.END)
+        self.entry_player_name.insert(0, data.get("player_name", ""))
 
-        self.combobox_provider = ttk.Combobox(frame_server, values = self.providers_names, state = "readonly")
-        self.combobox_provider.set(self.default_provider_name)
-        self.combobox_provider.bind("<<ComboboxSelected>>", self.combobox_provider_selected)
-        self.combobox_provider.grid(row=0, column=1, padx=5, pady=5, sticky="w")
+        self.text_character_description.delete("1.0", tk.END)
+        self.text_character_description.insert("1.0", data.get("char_desc", ""))
 
-        label_api = tk.Label(frame_server, text="Presets")
-        label_api.grid(row=0, column=2, padx=5, pady=5, sticky="w")
+        self.text_world_description.delete("1.0", tk.END)
+        self.text_world_description.insert("1.0", data.get("world_desc", ""))
 
-        label_server_URL = tk.Label(frame_server, text="Server URL:")
-        label_server_URL.grid(row=1, column=0, padx=5, pady=5, sticky="w")
+        self.text_chat.config(state="normal")
+        self.text_chat.delete("1.0", tk.END)
+        self.text_chat.insert("1.0", data.get("chat", ""))
 
-        self.entry_server_URL = tk.Entry(frame_server, width = 40)
-        self.entry_server_URL.insert(0, self.server_url)
-        self.entry_server_URL.grid(row=1, column=1, padx=5, pady=5, sticky="w")
-        
-        label_api = tk.Label(frame_server, text="Example: https://api.openai.com/v1/ (OpenAI Compatible only)")
-        label_api.grid(row=1, column=2, padx=5, pady=5, sticky="w")
+        self.label_save_load.config(text="Game successfully loaded")
 
-        label_api = tk.Label(frame_server, text="API key")
-        label_api.grid(row=2, column=0, padx=5, pady=5, sticky="w")
 
-        self.entry_api = tk.Entry(frame_server, width= 40)
-        self.entry_api.grid(row=2, column=1, padx=5, pady=5, sticky="w")
-
-        label_api = tk.Label(frame_server, text="Leave this blank for local models")
-        label_api.grid(row=2, column=2, padx=5, pady=5, sticky="w")
-        
-        # Server buttons
-        frame_server_buttons = tk.Frame(frame_server)
-        frame_server_buttons.grid(row=3, column=0, padx=5, pady=5, columnspan=3, sticky= 'w')
-
-        self.button_connect = tk.Button(frame_server_buttons, 
-                                        text="Connect",
-                                        command=self.connect,
-                                        width = 20
-        )
-        self.button_connect.grid(row=0, column=0, padx=5, pady=5, sticky="w")
-
-        self.button_disconnect = tk.Button(frame_server_buttons, 
-                                text="Disconnect",
-                                command=self.disconnect,
-                                width = 20
-        )
-        self.button_disconnect.grid(row=0, column=1, padx=5, pady=5, sticky="w")
-
-        self.label_connection = tk.Label(frame_server_buttons, text="Disconnected")
-        self.label_connection.grid(row=0, column=2, padx=5, pady=5, sticky="w")
-        
-        # World and character settings frame
-        frame_world_character = tk.LabelFrame(frame_global, text = "World and Character Settings", width=100)
-        frame_world_character.grid(row=1, column=0, padx=5, pady=5, columnspan=3)
-
-        label_model = tk.Label(frame_world_character, text="Model:")
-        label_model.grid(row=0, column=0, padx=5, pady=5, sticky="w")
-
-        self.combobox_model = ttk.Combobox(frame_world_character, values = self.model_ids, state = "disabled")
-        self.combobox_model.bind("<<ComboboxSelected>>", self.combobox_model_selected)
-        self.combobox_model.grid(row=1, column=0, padx=5, pady=5, sticky="w")
-
-        label_character_name = tk.Label(frame_world_character, text="Character name:")
-        label_character_name.grid(row=2, column=0, padx=5, pady=5, sticky="w")
-
-        self.entry_character= tk.Entry(frame_world_character)
-        self.entry_character.grid(row=3, column=0, padx=5, pady=5, sticky="w")
-
-        label_player_name = tk.Label(frame_world_character, text="Player name:")
-        label_player_name.grid(row=4, column=0, padx=5, pady=5, sticky="w")
-
-        self.entry_player= tk.Entry(frame_world_character)
-        self.entry_player.grid(row=5, column=0, padx=5, pady=5, sticky="w")
-
-        label_world = tk.Label(frame_world_character, text="World Information and Scenario")
-        label_world.grid(row=0, column=1, padx=5, pady=5, sticky="w")
-
-        self.text_world = tk.Text(frame_world_character, height=10, width=31)
-        self.text_world.grid(row=1, column=1, padx=5, pady=5, sticky="w", rowspan= 6)
-        
-        label_char = tk.Label(frame_world_character, text="Character Information")
-        label_char.grid(row=0, column=2, padx=5, pady=5, sticky="w")
-
-        self.text_char = tk.Text(frame_world_character, height=10, width=31)
-        self.text_char.grid(row=1, column=2, padx=5, pady=5, sticky="w", rowspan= 6)
-
-        # Chat section
-        frame_chat= tk.LabelFrame(frame_global, text = "Chat")
-        frame_chat.grid(row=2, column=0, padx=5, pady=5, columnspan=3)
-
-        self.text_chat = tk.Text(frame_chat, height=8, width=83)
-        self.text_chat.grid(row=0, column=0, padx=5, pady=5, sticky="w")
-
-        label_user_message = tk.Label(frame_chat, text="Your message")
-        label_user_message.grid(row=1, column=0, padx=5, pady=5, sticky="w")
-
-        self.text_user_message = tk.Text(frame_chat, height=4, width=83)
-        self.text_user_message.grid(row=2, column=0, padx=5, pady=5, sticky="w")
-
-        #  Chat and save/load controls
-        frame_chat_buttons = tk.Frame(frame_chat)
-        frame_chat_buttons.grid(row=3, column=0, padx=5, pady=5, columnspan=3, sticky= 'w')
-
-        self.button_send = tk.Button(frame_chat_buttons, 
-                                     text="Send message",
-                                     command=self.generate,
-                                     width = 20,
-                                     state="disabled"
-        )
-        self.button_send.grid(row=0, column=0, padx=5, pady=5, sticky="w")
-
-        self.button_regen = tk.Button(frame_chat_buttons, 
-                                text="Regenerate last",
-                                command=self.regen,
-                                width = 20,
-                                state="disabled"
-        )
-        self.button_regen.grid(row=0, column=1, padx=5, pady=5, sticky="w")
-
-        self.label_generation = tk.Label(frame_chat_buttons, text="Send message to start")
-        self.label_generation.grid(row=0, column=2, padx=5, pady=5, sticky="w")
-
-        # Chat controls
-        self.button_save = tk.Button(frame_chat_buttons, 
-                                     text="Save game",
-                                     command=self.save_game,
-                                     width = 20,    
-                                     state="normal"
-        )
-        self.button_save.grid(row=1, column=0, padx=5, pady=5, sticky="w")
-
-        self.button_load = tk.Button(frame_chat_buttons, 
-                                text="Load game",
-                                command=self.load_game,
-                                width = 20,
-                                state="normal"
-        )
-        self.button_load.grid(row=1, column=1, padx=5, pady=5, sticky="w")
-
-        self.label_save_load = tk.Label(frame_chat_buttons, text="")
-        self.label_save_load.grid(row=1, column=2, padx=5, pady=5, sticky="w")
-
-       
-
-if __name__ == "__main__":
-    """Test of GUI"""
-
-    # Init
-    rpg_client = RPG_client()
-    app = RPG_ui(rpg_client)
-
-    # providers name test
-    provider_names = app.get_default_providers_names(DEFAULT_SETTINGS.BASE_CONNECTION_OPTIONS)
-    print(provider_names)
-
-    app.mainloop()
-
+# Backward compatibility for old imports.
+RPG_ui = RPGUI
