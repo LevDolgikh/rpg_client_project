@@ -90,6 +90,7 @@ class RPG_ui(tk.Tk):
 
         self.button_send.config(state="normal")
         self.button_regen.config(state="normal")
+        self.text_chat.config(state="normal")
 
         if res:
             self.label_generation.config(text="Generation Done")
@@ -160,6 +161,7 @@ class RPG_ui(tk.Tk):
 
         self.button_send.config(state="disabled")
         self.button_regen.config(state="disabled")
+        self.text_chat.config(state="disabled")
         self.label_generation.config(text="Generating")
 
         user_text = self.text_user_message.get("1.0", "end-1c")
