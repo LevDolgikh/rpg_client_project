@@ -28,6 +28,9 @@ class RPGUI(tk.Tk):
         self.default_provider = self.providers[0]
         self.default_provider_name = self.default_provider["name"]
         self.model_ids: list[str] = []
+        self._chat_is_programmatic_update = False
+        self._chat_changed_since_last_generation = True
+        self._last_response_start_index: str | None = None
 
         self._build_layout()
         self._set_server_url_from_provider(self.default_provider_name)
@@ -153,7 +156,9 @@ class RPGUI(tk.Tk):
         tk.Label(frame_world_character, text="World Information and Scenario").grid(
             row=0, column=1, padx=5, pady=5, sticky="w"
         )
-        self.text_world_description = tk.Text(frame_world_character, height=10, width=31)
+        self.text_world_description = tk.Text(
+            frame_world_character, height=10, width=31, wrap="word"
+        )
         self.text_world_description.grid(
             row=1, column=1, padx=5, pady=5, sticky="nsew", rowspan=6
         )
@@ -161,7 +166,9 @@ class RPGUI(tk.Tk):
         tk.Label(frame_world_character, text="Character Information").grid(
             row=0, column=2, padx=5, pady=5, sticky="w"
         )
-        self.text_character_description = tk.Text(frame_world_character, height=10, width=31)
+        self.text_character_description = tk.Text(
+            frame_world_character, height=10, width=31, wrap="word"
+        )
         self.text_character_description.grid(
             row=1, column=2, padx=5, pady=5, sticky="nsew", rowspan=6
         )
@@ -172,13 +179,14 @@ class RPGUI(tk.Tk):
         frame_chat.grid_rowconfigure(0, weight=1)
         frame_chat.grid_rowconfigure(2, weight=1)
 
-        self.text_chat = tk.Text(frame_chat, height=8, width=93)
+        self.text_chat = tk.Text(frame_chat, height=8, width=93, wrap="word")
         self.text_chat.grid(row=0, column=0, padx=5, pady=5, sticky="nsew")
+        self.text_chat.bind("<<Modified>>", self._on_chat_modified)
 
         tk.Label(frame_chat, text="Your message:").grid(
             row=1, column=0, padx=5, pady=5, sticky="w"
         )
-        self.text_user_message = tk.Text(frame_chat, height=4, width=93)
+        self.text_user_message = tk.Text(frame_chat, height=4, width=93, wrap="word")
         self.text_user_message.grid(row=2, column=0, padx=5, pady=5, sticky="nsew")
 
         frame_chat_buttons = tk.Frame(frame_chat)
@@ -338,16 +346,60 @@ class RPGUI(tk.Tk):
         )
         self.after(0, self._on_generation_finished, result)
 
-    def _on_generation_finished(self, result: OperationResult) -> None:
-        self.button_send.config(state="normal")
-        self.button_regenerate.config(state="normal")
-        self.text_chat.config(state="normal")
-
-        if result.ok:
-            self.label_generation.config(text="Generation done")
-            self.text_chat.insert(tk.END, result.value)
+    def _on_chat_modified(self, event: tk.Event) -> None:
+        if not self.text_chat.edit_modified():
             return
 
+        if not self._chat_is_programmatic_update:
+            self._chat_changed_since_last_generation = True
+            self.button_regenerate.config(state="disabled")
+
+        self.text_chat.edit_modified(False)
+
+    def _insert_chat_text(self, text: str) -> None:
+        self._chat_is_programmatic_update = True
+        try:
+            self.text_chat.insert(tk.END, text)
+        finally:
+            self._chat_is_programmatic_update = False
+            self.text_chat.edit_modified(False)
+
+    def _append_chat_message(self, speaker: str, content: str) -> None:
+        message = f"{speaker}: {content}".strip()
+        existing = self.text_chat.get("1.0", "end-1c")
+        normalized_existing = existing.rstrip("\n")
+
+        if normalized_existing:
+            self._delete_chat_text("1.0", tk.END)
+            self._insert_chat_text(normalized_existing + "\n\n" + message + "\n\n")
+        else:
+            self._insert_chat_text(message + "\n\n")
+
+    def _delete_chat_text(self, start: str, end: str) -> None:
+        self._chat_is_programmatic_update = True
+        try:
+            self.text_chat.delete(start, end)
+        finally:
+            self._chat_is_programmatic_update = False
+            self.text_chat.edit_modified(False)
+
+    def _on_generation_finished(self, result: OperationResult) -> None:
+        self.button_send.config(state="normal")
+        self.button_regenerate.config(state="disabled")
+        self.text_chat.config(state="normal")
+
+        char_name = self.entry_character_name.get()
+
+        if result.ok:
+            self._last_response_start_index = self.text_chat.index("end-1c")
+            self.label_generation.config(text="Generation done")
+            self._append_chat_message(char_name, result.value)
+            self._chat_changed_since_last_generation = False
+            self.button_regenerate.config(state="normal")
+            return
+
+        self._last_response_start_index = None
+        self._chat_changed_since_last_generation = True
         self.label_generation.config(text=f"Generation error: {result.error}")
         logger.error("Generation failed: %s", result.error)
 
@@ -375,7 +427,7 @@ class RPGUI(tk.Tk):
         self.label_generation.config(text="Generating...")
 
         self.text_user_message.delete("1.0", tk.END)
-        self.text_chat.insert(tk.END, user_message)
+        self._append_chat_message(player_name, user_text)
         self.text_chat.config(state="disabled")
 
         threading.Thread(
@@ -390,7 +442,41 @@ class RPGUI(tk.Tk):
         ).start()
 
     def regenerate(self) -> None:
-        self.label_generation.config(text="Not implemented yet")
+        if self._chat_changed_since_last_generation or not self._last_response_start_index:
+            self.label_generation.config(text="Regenerate unavailable: chat was changed")
+            self.button_regenerate.config(state="disabled")
+            return
+
+        self.text_chat.config(state="normal")
+        self._delete_chat_text(self._last_response_start_index, tk.END)
+        self.text_chat.config(state="disabled")
+
+        character_name = self.entry_character_name.get().strip()
+        character_description = self.text_character_description.get("1.0", "end-1c").strip()
+        world_description = self.text_world_description.get("1.0", "end-1c").strip()
+        message_history = self.text_chat.get("1.0", "end-1c").strip()
+
+        if not message_history:
+            self.label_generation.config(text="Regenerate error: message history is empty")
+            self._last_response_start_index = None
+            self._chat_changed_since_last_generation = True
+            self.button_regenerate.config(state="disabled")
+            return
+
+        self.button_send.config(state="disabled")
+        self.button_regenerate.config(state="disabled")
+        self.label_generation.config(text="Regenerating...")
+
+        threading.Thread(
+            target=self._generate_worker,
+            args=(
+                character_name,
+                character_description,
+                world_description,
+                message_history,
+            ),
+            daemon=True,
+        ).start()
 
     def save_game(self) -> None:
         file_path = filedialog.asksaveasfilename(
@@ -463,7 +549,10 @@ class RPGUI(tk.Tk):
 
         self.text_chat.config(state="normal")
         self.text_chat.delete("1.0", tk.END)
-        self.text_chat.insert("1.0", data.get("chat", ""))
+        self._insert_chat_text(data.get("chat", ""))
+        self._last_response_start_index = None
+        self._chat_changed_since_last_generation = True
+        self.button_regenerate.config(state="disabled")
 
         self.label_save_load.config(text="Game successfully loaded")
 
