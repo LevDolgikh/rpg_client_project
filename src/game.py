@@ -34,7 +34,7 @@ class RPG_client:
         """Set the active model for generating responses, returns True if successful, False if model_id is not in the list of available models"""
         return self.llm_client.set_model(model_id)
     
-    def generate_responce(self, 
+    def generate_response(self, 
                           character_name,
                           character_description,
                           world_description,
@@ -54,11 +54,10 @@ class RPG_client:
 if main := __name__ == "__main__":
     """Test the RPG client by connecting to a local LLM server, setting up a sample game state, and generating a response based on a sample message history"""
     
-    # System message formating test
+    # System message formatting test
     character_name = "Greg"
     character_description = "A funny guy"
     world_description = "Modern world"
-    story_intent = "Greg talk with random person" 
 
     base_url = "http://127.0.0.1:1234/v1" # Local LM Studio
     #base_url = "http://localhost:11434/v1/" # Ollama
@@ -67,10 +66,9 @@ if main := __name__ == "__main__":
     message = "hi! what is your name?"
 
     rpg_client.connect_to_llm(base_url=base_url, api_key="")
-    response = rpg_client.generate_responce(character_name, 
+    response = rpg_client.generate_response(character_name, 
                                  character_description, 
                                  world_description,
-                                 story_intent, 
                                  message)
     print("Generated response:", response)
     

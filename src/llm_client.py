@@ -16,12 +16,12 @@ class LLMClient:
         self.client = ""
         self.current_model = ""
         self.models = ""
-        self.models_ids = ""
+        self.model_ids = ""
         self.status = "Disconnected"
         
     def connect(self, base_url, api_key):
         """Connect to the LLM server with the provided base URL and API key, 
-        returns model list if seccesful. Example [chatGPT-40, llama 2b,...]"""
+        returns model list if successful. Example [chatGPT-40, llama 2b,...]"""
         try:
             self.client = OpenAI(base_url=base_url, 
                                  api_key=api_key)
@@ -39,7 +39,7 @@ class LLMClient:
         for model in self.models:
             model_list.append(model.id)
   
-        self.models_ids = model_list
+        self.model_ids = model_list
 
         return model_list
     
@@ -50,7 +50,7 @@ class LLMClient:
             self.client = ""
         self.current_model = ""
         self.models = ""
-        self.models_ids = ""
+        self.model_ids = ""
         self.status = "Disconnected"
 
     def get_models(self):
@@ -62,13 +62,13 @@ class LLMClient:
         
     def get_model_ids(self):
         if self.status == "Connected":
-            return  self.models_ids
+            return  self.model_ids
         else:
             return ""
     
     def set_model(self, model_id):
         """Set model by id, returns True if successful, False if model_id is not in the list of available models"""
-        if model_id in self.models_ids:
+        if model_id in self.model_ids:
             self.current_model = model_id
             return True
         else:
@@ -114,15 +114,15 @@ if main := __name__ == "__main__":
         else:
             print("Failed to connect to LLM server")
         
-        instuctions = "You are Greg, a funny guy"
+        instructions = "You are Greg, a funny guy"
         message = "what is your name?"
 
         # Static response
-        response = client.generate_response(instuctions, message)
+        response = client.generate_response(instructions, message)
         print("LLM Response:", response)
         
         # Streaming response
-        response_stream = client.generate_response_stream(instuctions, message)
+        response_stream = client.generate_response_stream(instructions, message)
         print("Streaming response: ")
         for event in response_stream:
             if event.type == "response.output_text.delta":

@@ -59,7 +59,7 @@ class RPG_ui(tk.Tk):
         return url
     
     def combobox_provider_selected(self, event):
-        """Actions per selecting provider: set default server adress"""
+        """Actions when selecting a provider: set default server address"""
         self.server_url = self.get_server_url(event.widget.get())
         self.entry_server_URL.delete(0, tk.END)
         self.entry_server_URL.insert(0, self.server_url)
@@ -78,12 +78,16 @@ class RPG_ui(tk.Tk):
             self.disconnect()
             self.label_connection.config(text = "Disconnected. Model selection error")
 
-    def _generate_worker(self):
+    def _generate_worker(self,
+                         character_name,
+                         character_description,
+                         world_description,
+                         message_history):
 
-        res = self.rpg_client.generate_responce(self.entry_character.get(),
-                                                self.text_char.get("1.0", "end-1c"),
-                                                self.text_world.get("1.0", "end-1c"),
-                                                self.text_chat.get("1.0", "end-1c"))
+        res = self.rpg_client.generate_response(character_name,
+                                                character_description,
+                                                world_description,
+                                                message_history)
         self.after(0, self._generate_finished, res)
     
     def _generate_finished(self, res):
@@ -161,17 +165,28 @@ class RPG_ui(tk.Tk):
 
         self.button_send.config(state="disabled")
         self.button_regen.config(state="disabled")
-        self.text_chat.config(state="disabled")
         self.label_generation.config(text="Generating")
 
         user_text = self.text_user_message.get("1.0", "end-1c")
         player_name = self.entry_player.get()
         user_message = player_name + ": " + user_text
+
+        character_name = self.entry_character.get()
+        character_description = self.text_char.get("1.0", "end-1c")
+        world_description = self.text_world.get("1.0", "end-1c")
+        chat_history = self.text_chat.get("1.0", "end-1c")
+        message_history = (chat_history + "\n" + user_message).strip() if chat_history else user_message
+
         self.text_user_message.delete("1.0", tk.END)
         self.text_chat.insert(tk.END, user_message)
+        self.text_chat.config(state="disabled")
 
         threading.Thread(
             target=self._generate_worker,
+            args=(character_name,
+                  character_description,
+                  world_description,
+                  message_history),
             daemon=True
         ).start()
     
@@ -193,15 +208,15 @@ class RPG_ui(tk.Tk):
             "server_api": self.entry_api.get(),
             "char_name": self.entry_character.get(),
             "player_name": self.entry_player.get(),
-            "char_disc": self.text_char.get("1.0", "end-1c"),
-            "world_disc": self.text_world.get("1.0", "end-1c"),
+            "char_desc": self.text_char.get("1.0", "end-1c"),
+            "world_desc": self.text_world.get("1.0", "end-1c"),
             "chat": self.text_chat.get("1.0", "end-1c")
         }
 
         try:
             with open(file_path, "w", encoding="utf-8") as f:
                 json.dump(data, f, ensure_ascii=False, indent=4)
-            self.label_save_load.config(text = "Game Ssuccessfully Saved")
+            self.label_save_load.config(text = "Game successfully saved")
         except Exception as e:
             self.label_save_load.config(text = "Save Error")
                 
@@ -232,10 +247,10 @@ class RPG_ui(tk.Tk):
             self.entry_player.insert(0, data.get("player_name", ""))
 
             self.text_char.delete("1.0", tk.END)
-            self.text_char.insert("1.0", data.get("char_disc", ""))
+            self.text_char.insert("1.0", data.get("char_desc", ""))
 
             self.text_world.delete("1.0", tk.END)
-            self.text_world.insert("1.0", data.get("world_disc", ""))
+            self.text_world.insert("1.0", data.get("world_desc", ""))
 
             self.text_chat.delete("1.0", tk.END)
             self.text_chat.insert("1.0", data.get("chat", ""))
@@ -291,7 +306,7 @@ class RPG_ui(tk.Tk):
         label_api = tk.Label(frame_server, text="Leave this blank for local models")
         label_api.grid(row=2, column=2, padx=5, pady=5, sticky="w")
         
-        # Server buttonss
+        # Server buttons
         frame_server_buttons = tk.Frame(frame_server)
         frame_server_buttons.grid(row=3, column=0, padx=5, pady=5, columnspan=3, sticky= 'w')
 
