@@ -35,12 +35,37 @@ class RPGUI(tk.Tk):
     def _build_layout(self) -> None:
         self.title("RPG Chat Client")
         self.geometry("900x650")
+        self.minsize(720, 520)
 
-        frame_global = tk.Frame(self)
-        frame_global.pack(side="top", pady=20)
+        self.grid_rowconfigure(0, weight=1)
+        self.grid_columnconfigure(0, weight=1)
+
+        self._layout_max_width = 980
+
+        self.main_canvas = tk.Canvas(self, highlightthickness=0)
+        self.main_canvas.grid(row=0, column=0, sticky="nsew")
+
+        self.main_scrollbar = ttk.Scrollbar(
+            self, orient="vertical", command=self.main_canvas.yview
+        )
+        self.main_scrollbar.grid(row=0, column=1, sticky="ns")
+        self.main_canvas.configure(yscrollcommand=self.main_scrollbar.set)
+
+        frame_global = tk.Frame(self.main_canvas, padx=10, pady=20)
+        self._global_window = self.main_canvas.create_window(
+            (0, 0), window=frame_global, anchor="n"
+        )
+        self.main_canvas.bind("<Configure>", self._on_canvas_configure)
+        frame_global.bind("<Configure>", self._on_content_configure)
+        self.bind_all("<MouseWheel>", self._on_mousewheel)
+
+        frame_global.grid_columnconfigure(0, weight=1)
+        frame_global.grid_rowconfigure(2, weight=1)
 
         frame_server = tk.LabelFrame(frame_global, text="Server Information")
-        frame_server.grid(row=0, column=0, padx=5, pady=5, columnspan=3)
+        frame_server.grid(row=0, column=0, padx=5, pady=5, sticky="ew")
+        frame_server.grid_columnconfigure(1, weight=1)
+        frame_server.grid_columnconfigure(2, weight=1)
 
         tk.Label(frame_server, text="Provider:").grid(
             row=0, column=0, padx=5, pady=5, sticky="w"
@@ -53,7 +78,7 @@ class RPGUI(tk.Tk):
         )
         self.combobox_provider.set(self.default_provider_name)
         self.combobox_provider.bind("<<ComboboxSelected>>", self.on_provider_selected)
-        self.combobox_provider.grid(row=0, column=1, padx=5, pady=5, sticky="w")
+        self.combobox_provider.grid(row=0, column=1, padx=5, pady=5, sticky="ew")
 
         tk.Label(frame_server, text="Presets").grid(
             row=0, column=2, padx=5, pady=5, sticky="w"
@@ -63,7 +88,7 @@ class RPGUI(tk.Tk):
             row=1, column=0, padx=5, pady=5, sticky="w"
         )
         self.entry_server_url = tk.Entry(frame_server, width=40)
-        self.entry_server_url.grid(row=1, column=1, padx=5, pady=5, sticky="w")
+        self.entry_server_url.grid(row=1, column=1, padx=5, pady=5, sticky="ew")
         tk.Label(
             frame_server,
             text="Example: https://api.openai.com/v1/ (OpenAI-compatible only)",
@@ -73,13 +98,14 @@ class RPGUI(tk.Tk):
             row=2, column=0, padx=5, pady=5, sticky="w"
         )
         self.entry_api_key = tk.Entry(frame_server, width=40, show="*")
-        self.entry_api_key.grid(row=2, column=1, padx=5, pady=5, sticky="w")
+        self.entry_api_key.grid(row=2, column=1, padx=5, pady=5, sticky="ew")
         tk.Label(frame_server, text="Leave blank for local models").grid(
             row=2, column=2, padx=5, pady=5, sticky="w"
         )
 
         frame_server_buttons = tk.Frame(frame_server)
-        frame_server_buttons.grid(row=3, column=0, padx=5, pady=5, columnspan=3, sticky="w")
+        frame_server_buttons.grid(row=3, column=0, padx=5, pady=5, columnspan=3, sticky="ew")
+        frame_server_buttons.grid_columnconfigure(2, weight=1)
 
         self.button_connect = tk.Button(
             frame_server_buttons, text="Connect", command=self.connect, width=20
@@ -97,7 +123,11 @@ class RPGUI(tk.Tk):
         frame_world_character = tk.LabelFrame(
             frame_global, text="World and Character Settings", width=100
         )
-        frame_world_character.grid(row=1, column=0, padx=5, pady=5, columnspan=3)
+        frame_world_character.grid(row=1, column=0, padx=5, pady=5, sticky="ew")
+        frame_world_character.grid_columnconfigure(0, weight=1)
+        frame_world_character.grid_columnconfigure(1, weight=2)
+        frame_world_character.grid_columnconfigure(2, weight=2)
+        frame_world_character.grid_rowconfigure(1, weight=1)
 
         tk.Label(frame_world_character, text="Model:").grid(
             row=0, column=0, padx=5, pady=5, sticky="w"
@@ -106,26 +136,26 @@ class RPGUI(tk.Tk):
             frame_world_character, values=self.model_ids, state="disabled"
         )
         self.combobox_model.bind("<<ComboboxSelected>>", self.on_model_selected)
-        self.combobox_model.grid(row=1, column=0, padx=5, pady=5, sticky="w")
+        self.combobox_model.grid(row=1, column=0, padx=5, pady=5, sticky="ew")
 
         tk.Label(frame_world_character, text="Character name:").grid(
             row=2, column=0, padx=5, pady=5, sticky="w"
         )
         self.entry_character_name = tk.Entry(frame_world_character)
-        self.entry_character_name.grid(row=3, column=0, padx=5, pady=5, sticky="w")
+        self.entry_character_name.grid(row=3, column=0, padx=5, pady=5, sticky="ew")
 
         tk.Label(frame_world_character, text="Player name:").grid(
             row=4, column=0, padx=5, pady=5, sticky="w"
         )
         self.entry_player_name = tk.Entry(frame_world_character)
-        self.entry_player_name.grid(row=5, column=0, padx=5, pady=5, sticky="w")
+        self.entry_player_name.grid(row=5, column=0, padx=5, pady=5, sticky="ew")
 
         tk.Label(frame_world_character, text="World Information and Scenario").grid(
             row=0, column=1, padx=5, pady=5, sticky="w"
         )
         self.text_world_description = tk.Text(frame_world_character, height=10, width=31)
         self.text_world_description.grid(
-            row=1, column=1, padx=5, pady=5, sticky="w", rowspan=6
+            row=1, column=1, padx=5, pady=5, sticky="nsew", rowspan=6
         )
 
         tk.Label(frame_world_character, text="Character Information").grid(
@@ -133,23 +163,27 @@ class RPGUI(tk.Tk):
         )
         self.text_character_description = tk.Text(frame_world_character, height=10, width=31)
         self.text_character_description.grid(
-            row=1, column=2, padx=5, pady=5, sticky="w", rowspan=6
+            row=1, column=2, padx=5, pady=5, sticky="nsew", rowspan=6
         )
 
         frame_chat = tk.LabelFrame(frame_global, text="Chat")
-        frame_chat.grid(row=2, column=0, padx=5, pady=5, columnspan=3)
+        frame_chat.grid(row=2, column=0, padx=5, pady=5, sticky="nsew")
+        frame_chat.grid_columnconfigure(0, weight=1)
+        frame_chat.grid_rowconfigure(0, weight=1)
+        frame_chat.grid_rowconfigure(2, weight=1)
 
         self.text_chat = tk.Text(frame_chat, height=8, width=93)
-        self.text_chat.grid(row=0, column=0, padx=5, pady=5, sticky="w")
+        self.text_chat.grid(row=0, column=0, padx=5, pady=5, sticky="nsew")
 
         tk.Label(frame_chat, text="Your message:").grid(
             row=1, column=0, padx=5, pady=5, sticky="w"
         )
         self.text_user_message = tk.Text(frame_chat, height=4, width=93)
-        self.text_user_message.grid(row=2, column=0, padx=5, pady=5, sticky="w")
+        self.text_user_message.grid(row=2, column=0, padx=5, pady=5, sticky="nsew")
 
         frame_chat_buttons = tk.Frame(frame_chat)
-        frame_chat_buttons.grid(row=3, column=0, padx=5, pady=5, columnspan=3, sticky="w")
+        frame_chat_buttons.grid(row=3, column=0, padx=5, pady=5, sticky="ew")
+        frame_chat_buttons.grid_columnconfigure(2, weight=1)
 
         self.button_send = tk.Button(
             frame_chat_buttons,
@@ -192,6 +226,19 @@ class RPGUI(tk.Tk):
 
         self.label_save_load = tk.Label(frame_chat_buttons, text="")
         self.label_save_load.grid(row=1, column=2, padx=5, pady=5, sticky="w")
+
+    def _on_canvas_configure(self, event: tk.Event) -> None:
+        content_width = min(event.width, self._layout_max_width)
+        x_offset = max((event.width - content_width) // 2, 0)
+        self.main_canvas.coords(self._global_window, x_offset, 0)
+        self.main_canvas.itemconfigure(self._global_window, width=content_width)
+
+    def _on_content_configure(self, event: tk.Event) -> None:
+        self.main_canvas.configure(scrollregion=self.main_canvas.bbox("all"))
+
+    def _on_mousewheel(self, event: tk.Event) -> None:
+        if self.main_canvas.winfo_exists():
+            self.main_canvas.yview_scroll(int(-event.delta / 120), "units")
 
     def _set_server_url_from_provider(self, provider_name: str) -> None:
         base_url = ""
