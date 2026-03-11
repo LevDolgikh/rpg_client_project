@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import Any, Callable
 
 from openai import OpenAI
 
@@ -99,3 +99,52 @@ class LLMClient:
         if not output_text:
             raise LLMClientError("Server returned an empty response.")
         return output_text
+
+    def generate_response_stream(
+        self, instructions: str, user_input: Any, on_chunk: Callable[[str], None]
+    ) -> None:
+        """Generate a streaming text response and emit chunks via callback."""
+        if not self.is_connected:
+            raise LLMClientError("Client is not connected.")
+        if not self._current_model:
+            raise LLMClientError("No active model selected.")
+        if user_input is None or (isinstance(user_input, str) and not user_input.strip()):
+            raise LLMClientError("Input message is empty.")
+
+        collected: list[str] = []
+        try:
+            stream = self._client.responses.create(
+                model=self._current_model,
+                instructions=instructions,
+                input=user_input,
+                stream=True,
+            )
+            for event in stream:
+                delta = self._extract_stream_delta(event)
+                if delta:
+                    collected.append(delta)
+                    on_chunk(delta)
+        except Exception as exc:
+            logger.exception("LLM streaming response generation failed.")
+            raise LLMClientError(f"Response generation failed: {exc}") from exc
+
+        if not "".join(collected).strip():
+            raise LLMClientError("Server returned an empty response.")
+
+    @staticmethod
+    def _extract_stream_delta(event: Any) -> str:
+        """Extract incremental text delta from a Responses API stream event."""
+        if event is None:
+            return ""
+
+        event_type = ""
+        if isinstance(event, dict):
+            event_type = str(event.get("type", ""))
+            if event_type == "response.output_text.delta":
+                return str(event.get("delta", ""))
+            return ""
+
+        event_type = str(getattr(event, "type", ""))
+        if event_type == "response.output_text.delta":
+            return str(getattr(event, "delta", "") or "")
+        return ""

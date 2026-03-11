@@ -12,9 +12,7 @@ from tkinter import ttk
 from game import OperationResult, RPGClient
 from settings import AppSettings
 
-
 logger = logging.getLogger(__name__)
-
 
 class RPGUI(tk.Tk):
     """Main GUI window."""
@@ -22,6 +20,7 @@ class RPGUI(tk.Tk):
     def __init__(self, rpg_client: RPGClient) -> None:
         super().__init__()
         self.rpg_client = rpg_client
+        self.stream = True
 
         self.providers = AppSettings.BASE_CONNECTION_OPTIONS
         self.provider_names = [provider["name"] for provider in self.providers]
@@ -31,6 +30,7 @@ class RPGUI(tk.Tk):
         self._chat_is_programmatic_update = False
         self._chat_changed_since_last_generation = True
         self._last_response_start_index: str | None = None
+        self._stream_has_chunks = False
 
         self._build_layout()
         self._set_server_url_from_provider(self.default_provider_name)
@@ -179,7 +179,7 @@ class RPGUI(tk.Tk):
         frame_chat.grid_rowconfigure(0, weight=1)
         frame_chat.grid_rowconfigure(2, weight=1)
 
-        self.text_chat = tk.Text(frame_chat, height=8, width=93, wrap="word")
+        self.text_chat = tk.Text(frame_chat, height=16, width=93, wrap="word")
         self.text_chat.grid(row=0, column=0, padx=5, pady=5, sticky="nsew")
         self.text_chat.bind("<<Modified>>", self._on_chat_modified)
 
@@ -337,7 +337,19 @@ class RPGUI(tk.Tk):
         character_description: str,
         world_description: str,
         message_history: str,
+        stream_mode: bool,
     ) -> None:
+        if stream_mode:
+            result = self.rpg_client.generate_response_stream(
+                character_name=character_name,
+                character_description=character_description,
+                world_description=world_description,
+                message_history=message_history,
+                on_chunk=lambda chunk: self.after(0, self._on_stream_chunk, chunk),
+            )
+            self.after(0, self._on_stream_finished, result)
+            return
+
         result = self.rpg_client.generate_response(
             character_name=character_name,
             character_description=character_description,
@@ -403,6 +415,53 @@ class RPGUI(tk.Tk):
         self.label_generation.config(text=f"Generation error: {result.error}")
         logger.error("Generation failed: %s", result.error)
 
+    def _start_stream_message(self, speaker: str) -> None:
+        self._stream_has_chunks = False
+        self._last_response_start_index = self.text_chat.index("end-1c")
+        existing = self.text_chat.get("1.0", "end-1c")
+        normalized_existing = existing.rstrip("\n")
+        message_start = f"{speaker}: "
+
+        self.text_chat.config(state="normal")
+        if normalized_existing:
+            self._delete_chat_text("1.0", tk.END)
+            self._insert_chat_text(normalized_existing + "\n\n" + message_start)
+        else:
+            self._insert_chat_text(message_start)
+        self.text_chat.config(state="disabled")
+
+    def _on_stream_chunk(self, chunk: str) -> None:
+        if not chunk:
+            return
+        self._stream_has_chunks = True
+        self.text_chat.config(state="normal")
+        self._insert_chat_text(chunk)
+        self.text_chat.config(state="disabled")
+
+    def _on_stream_finished(self, result: OperationResult) -> None:
+        self.button_send.config(state="normal")
+        self.button_regenerate.config(state="disabled")
+        self.text_chat.config(state="normal")
+
+        if result.ok and self._stream_has_chunks:
+            self._insert_chat_text("\n\n")
+            self.label_generation.config(text="Generation done")
+            self._chat_changed_since_last_generation = False
+            self.button_regenerate.config(state="normal")
+            return
+
+        if self._last_response_start_index is not None:
+            self._delete_chat_text(self._last_response_start_index, tk.END)
+
+        self._last_response_start_index = None
+        self._chat_changed_since_last_generation = True
+        if result.ok:
+            self.label_generation.config(text="Generation error: empty response")
+            logger.error("Generation failed: empty streaming response.")
+        else:
+            self.label_generation.config(text=f"Generation error: {result.error}")
+            logger.error("Generation failed: %s", result.error)
+
     def generate(self) -> None:
         user_text = self.text_user_message.get("1.0", "end-1c").strip()
         player_name = self.entry_player_name.get().strip() or "Player"
@@ -428,7 +487,10 @@ class RPGUI(tk.Tk):
 
         self.text_user_message.delete("1.0", tk.END)
         self._append_chat_message(player_name, user_text)
-        self.text_chat.config(state="disabled")
+        if self.stream:
+            self._start_stream_message(character_name)
+        else:
+            self.text_chat.config(state="disabled")
 
         threading.Thread(
             target=self._generate_worker,
@@ -437,6 +499,7 @@ class RPGUI(tk.Tk):
                 character_description,
                 world_description,
                 message_history,
+                self.stream,
             ),
             daemon=True,
         ).start()
@@ -466,6 +529,8 @@ class RPGUI(tk.Tk):
         self.button_send.config(state="disabled")
         self.button_regenerate.config(state="disabled")
         self.label_generation.config(text="Regenerating...")
+        if self.stream:
+            self._start_stream_message(character_name)
 
         threading.Thread(
             target=self._generate_worker,
@@ -474,6 +539,7 @@ class RPGUI(tk.Tk):
                 character_description,
                 world_description,
                 message_history,
+                self.stream,
             ),
             daemon=True,
         ).start()
@@ -555,7 +621,3 @@ class RPGUI(tk.Tk):
         self.button_regenerate.config(state="disabled")
 
         self.label_save_load.config(text="Game successfully loaded")
-
-
-# Backward compatibility for old imports.
-RPG_ui = RPGUI

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Callable
 
 from llm_client import LLMClient, LLMClientError
 from settings import AppSettings
@@ -68,6 +68,35 @@ class RPGClient:
         except LLMClientError as exc:
             return OperationResult(ok=False, error=str(exc))
 
+    def generate_response_stream(
+        self,
+        character_name: str,
+        character_description: str,
+        world_description: str,
+        message_history: str,
+        on_chunk: Callable[[str], None],
+    ) -> OperationResult:
+        if not character_name.strip():
+            return OperationResult(ok=False, error="Character name is required.")
+        if not message_history.strip():
+            return OperationResult(ok=False, error="Message history is empty.")
+
+        system_prompt = self._build_system_prompt(
+            character_name=character_name,
+            character_description=character_description,
+            world_description=world_description,
+        )
+
+        try:
+            self.llm_client.generate_response_stream(
+                instructions=system_prompt,
+                user_input=message_history,
+                on_chunk=on_chunk,
+            )
+            return OperationResult(ok=True)
+        except LLMClientError as exc:
+            return OperationResult(ok=False, error=str(exc))
+
     @staticmethod
     def _build_system_prompt(
         character_name: str,
@@ -81,7 +110,3 @@ class RPGClient:
             world_description=world_description,
         )
         return f"{role_prompt}\n{context_prompt}".strip()
-
-
-# Backward compatibility for old imports.
-RPG_client = RPGClient

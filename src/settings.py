@@ -42,7 +42,3 @@ World Description:
             "type": "cloud",
         },
     ]
-
-
-# Backward compatibility for old imports.
-DEFAULT_SETTINGS = AppSettings
