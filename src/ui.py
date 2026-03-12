@@ -423,9 +423,14 @@ class RPGUI(tk.Tk):
         self._chat_is_programmatic_update = True
         try:
             self.text_chat.insert(tk.END, text)
+            self._scroll_chat_to_bottom()
         finally:
             self._chat_is_programmatic_update = False
             self.text_chat.edit_modified(False)
+
+    def _scroll_chat_to_bottom(self) -> None:
+        self.text_chat.see(tk.END)
+        self.text_chat.yview_moveto(1.0)
 
     def _append_chat_message(self, speaker: str, content: str) -> None:
         message = f"{speaker}: {content}".strip()

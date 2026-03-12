@@ -23,6 +23,7 @@ Character Persona:
 {character_description}
 World Description:
 {world_description}
+Answer example: I demand top quality work from my assistants. *She pauses, considering.* Alright, I suppose we can give it a shot. But remember, I expect nothing less than your best effort.
 """
 
     BASE_CONNECTION_OPTIONS = [

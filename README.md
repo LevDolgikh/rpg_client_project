@@ -2,7 +2,7 @@
 
 Desktop app on `tkinter` for roleplay chat with OpenAI-compatible LLM servers.
 
-Current release: **v3.0.0**
+Current release: **v3.0.1**
 
 ## What Changed in v3
 

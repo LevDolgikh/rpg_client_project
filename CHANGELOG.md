@@ -8,6 +8,7 @@ The format is based on Keep a Changelog, and this project follows Semantic Versi
 
 ### Changed
 - Add token limit
+- Add sroll to bottom when chat is updated.
 
 ## [3.0.0] - 2026-03-11
 
