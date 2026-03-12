@@ -1,4 +1,4 @@
-"""Tkinter GUI for the RPG chat client."""
+﻿"""Tkinter GUI for the RPG chat client."""
 
 from __future__ import annotations
 
@@ -31,6 +31,10 @@ class RPGUI(tk.Tk):
         self._chat_changed_since_last_generation = True
         self._last_response_start_index: str | None = None
         self._stream_has_chunks = False
+        self.default_token_limit = 4096
+        self.min_token_limit = 1
+        self.max_token_limit = 200000
+        self.token_limit_var = tk.IntVar(value=self.default_token_limit)
 
         self._build_layout()
         self._set_server_url_from_provider(self.default_provider_name)
@@ -141,17 +145,34 @@ class RPGUI(tk.Tk):
         self.combobox_model.bind("<<ComboboxSelected>>", self.on_model_selected)
         self.combobox_model.grid(row=1, column=0, padx=5, pady=5, sticky="ew")
 
-        tk.Label(frame_world_character, text="Character name:").grid(
+        tk.Label(frame_world_character, text="Token limit:").grid(
             row=2, column=0, padx=5, pady=5, sticky="w"
         )
-        self.entry_character_name = tk.Entry(frame_world_character)
-        self.entry_character_name.grid(row=3, column=0, padx=5, pady=5, sticky="ew")
+        token_limit_validator = (self.register(self._validate_token_limit_input), "%P")
+        self.spinbox_token_limit = tk.Spinbox(
+            frame_world_character,
+            from_=self.min_token_limit,
+            to=self.max_token_limit,
+            textvariable=self.token_limit_var,
+            width=10,
+            increment=512,
+            validate="key",
+            validatecommand=token_limit_validator,
+        )
+        self.spinbox_token_limit.bind("<FocusOut>", self._on_token_limit_focus_out)
+        self.spinbox_token_limit.grid(row=3, column=0, padx=5, pady=5, sticky="ew")
 
-        tk.Label(frame_world_character, text="Player name:").grid(
+        tk.Label(frame_world_character, text="Character name:").grid(
             row=4, column=0, padx=5, pady=5, sticky="w"
         )
+        self.entry_character_name = tk.Entry(frame_world_character)
+        self.entry_character_name.grid(row=5, column=0, padx=5, pady=5, sticky="ew")
+
+        tk.Label(frame_world_character, text="Player name:").grid(
+            row=6, column=0, padx=5, pady=5, sticky="w"
+        )
         self.entry_player_name = tk.Entry(frame_world_character)
-        self.entry_player_name.grid(row=5, column=0, padx=5, pady=5, sticky="ew")
+        self.entry_player_name.grid(row=7, column=0, padx=5, pady=5, sticky="ew")
 
         tk.Label(frame_world_character, text="World Information and Scenario").grid(
             row=0, column=1, padx=5, pady=5, sticky="w"
@@ -160,7 +181,7 @@ class RPGUI(tk.Tk):
             frame_world_character, height=10, width=31, wrap="word"
         )
         self.text_world_description.grid(
-            row=1, column=1, padx=5, pady=5, sticky="nsew", rowspan=6
+            row=1, column=1, padx=5, pady=5, sticky="nsew", rowspan=8
         )
 
         tk.Label(frame_world_character, text="Character Information").grid(
@@ -170,7 +191,7 @@ class RPGUI(tk.Tk):
             frame_world_character, height=10, width=31, wrap="word"
         )
         self.text_character_description.grid(
-            row=1, column=2, padx=5, pady=5, sticky="nsew", rowspan=6
+            row=1, column=2, padx=5, pady=5, sticky="nsew", rowspan=8
         )
 
         frame_chat = tk.LabelFrame(frame_global, text="Chat")
@@ -337,6 +358,7 @@ class RPGUI(tk.Tk):
         character_description: str,
         world_description: str,
         message_history: str,
+        token_limit: int,
         stream_mode: bool,
     ) -> None:
         if stream_mode:
@@ -345,6 +367,7 @@ class RPGUI(tk.Tk):
                 character_description=character_description,
                 world_description=world_description,
                 message_history=message_history,
+                token_limit=token_limit,
                 on_chunk=lambda chunk: self.after(0, self._on_stream_chunk, chunk),
             )
             self.after(0, self._on_stream_finished, result)
@@ -355,8 +378,36 @@ class RPGUI(tk.Tk):
             character_description=character_description,
             world_description=world_description,
             message_history=message_history,
+            token_limit=token_limit,
         )
         self.after(0, self._on_generation_finished, result)
+
+    def _validate_token_limit_input(self, proposed_value: str) -> bool:
+        if not proposed_value:
+            return False
+        if not proposed_value.isdigit():
+            return False
+
+        parsed_value = int(proposed_value)
+        return self.min_token_limit <= parsed_value <= self.max_token_limit
+
+    def _on_token_limit_focus_out(self, event: tk.Event) -> None:
+        self._get_token_limit()
+
+    def _get_token_limit(self) -> int:
+        raw_value = self.spinbox_token_limit.get().strip()
+        try:
+            token_limit = int(raw_value)
+        except ValueError:
+            token_limit = self.default_token_limit
+
+        if token_limit < self.min_token_limit:
+            token_limit = self.default_token_limit
+        elif token_limit > self.max_token_limit:
+            token_limit = self.max_token_limit
+
+        self.token_limit_var.set(token_limit)
+        return token_limit
 
     def _on_chat_modified(self, event: tk.Event) -> None:
         if not self.text_chat.edit_modified():
@@ -477,9 +528,10 @@ class RPGUI(tk.Tk):
         chat_history = self.text_chat.get("1.0", "end-1c").strip()
 
         if chat_history:
-            message_history = f"{chat_history}\n{user_message}"
+            message_history = f"{chat_history}\n\n{user_message}"
         else:
             message_history = user_message
+        token_limit = self._get_token_limit()
 
         self.button_send.config(state="disabled")
         self.button_regenerate.config(state="disabled")
@@ -499,6 +551,7 @@ class RPGUI(tk.Tk):
                 character_description,
                 world_description,
                 message_history,
+                token_limit,
                 self.stream,
             ),
             daemon=True,
@@ -518,6 +571,7 @@ class RPGUI(tk.Tk):
         character_description = self.text_character_description.get("1.0", "end-1c").strip()
         world_description = self.text_world_description.get("1.0", "end-1c").strip()
         message_history = self.text_chat.get("1.0", "end-1c").strip()
+        token_limit = self._get_token_limit()
 
         if not message_history:
             self.label_generation.config(text="Regenerate error: message history is empty")
@@ -539,6 +593,7 @@ class RPGUI(tk.Tk):
                 character_description,
                 world_description,
                 message_history,
+                token_limit,
                 self.stream,
             ),
             daemon=True,
@@ -561,6 +616,7 @@ class RPGUI(tk.Tk):
             "char_desc": self.text_character_description.get("1.0", "end-1c"),
             "world_desc": self.text_world_description.get("1.0", "end-1c"),
             "chat": self.text_chat.get("1.0", "end-1c"),
+            "token_limit": self._get_token_limit(),
         }
 
         try:
@@ -616,6 +672,16 @@ class RPGUI(tk.Tk):
         self.text_chat.config(state="normal")
         self.text_chat.delete("1.0", tk.END)
         self._insert_chat_text(data.get("chat", ""))
+        saved_token_limit = data.get("token_limit", self.default_token_limit)
+        try:
+            token_limit = int(saved_token_limit)
+        except (TypeError, ValueError):
+            token_limit = self.default_token_limit
+        if token_limit < self.min_token_limit:
+            token_limit = self.default_token_limit
+        elif token_limit > self.max_token_limit:
+            token_limit = self.max_token_limit
+        self.token_limit_var.set(token_limit)
         self._last_response_start_index = None
         self._chat_changed_since_last_generation = True
         self.button_regenerate.config(state="disabled")

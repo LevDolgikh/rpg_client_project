@@ -4,6 +4,11 @@ All notable changes to this project are documented in this file.
 
 The format is based on Keep a Changelog, and this project follows Semantic Versioning.
 
+## [3.0.1] - 2026-03-12
+
+### Changed
+- Add token limit
+
 ## [3.0.0] - 2026-03-11
 
 ### Changed
